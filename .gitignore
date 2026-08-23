@@ -1,0 +1,13 @@
+# dependencies / build
+node_modules/
+dist/
+*.local
+.env
+.env.*
+
+# vendored at install/build time from node_modules (see scripts/vendor-assets.mjs)
+public/wasm/
+
+# misc
+.DS_Store
+*.log
