@@ -11,3 +11,4 @@ public/wasm/
 # misc
 .DS_Store
 *.log
+smoke-out/

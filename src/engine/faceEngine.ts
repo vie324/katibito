@@ -14,6 +14,10 @@ import { SIGNS } from "../config/scoring";
 import { BLEND_COUNT, blendIndexByName } from "./blendshapeNames";
 import { matrixToEulerDeg } from "./dsp";
 
+/** 輪郭・眉・口・目の代表コネクタ(§9-5: 全478点は描かない) */
+export const FACE_CONTOURS: ReadonlyArray<{ start: number; end: number }> =
+  FaceLandmarker.FACE_LANDMARKS_CONTOURS;
+
 export type FaceFrame = {
   detected: boolean;
   /** 正準順の blendshape スコア。内部バッファを再利用しているので保持する側でコピーすること */

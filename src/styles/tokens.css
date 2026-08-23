@@ -1,0 +1,28 @@
+/* デザイントークン(§11)。コンセプトは「計測器」。
+   2つのシグナル色は2軸に対応する情報であり装飾ではない。
+   メーター・トレース・タイムライン・根拠テーブルで一貫させること。 */
+
+:root {
+  --panel: #14171c; /* 冷たいチャコール。純黒にしない */
+  --panel-raised: #1c2027;
+  --rule: #2a3038;
+  --ink: #e8e6e1; /* 暖色寄りの白。冷たい地に暖色文字=計器の質感 */
+  --ink-dim: #8a9099;
+  --ink-faint: #565c66;
+  --signal-a: #e8a33d; /* ナトリウム灯のアンバー = 主張性 */
+  --signal-e: #4fb3a5; /* 抑えたティール = 感情表出性 */
+
+  /* 状態表示(環境チェック等) */
+  --ok: #6fbf73;
+  --bad: #c75b39;
+
+  --font-ui: "BIZ UDPGothic", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+}
