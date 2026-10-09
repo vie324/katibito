@@ -1,0 +1,275 @@
+// クライアントとサーバーで共有する型(運用版)。
+// ここは型のみ。DOM にも Node にも依存しない。
+
+export type Role = "admin" | "interviewer";
+
+export type UserPublic = {
+  id: string;
+  loginId: string;
+  name: string;
+  role: Role;
+  disabled: boolean;
+  createdAt: string;
+};
+
+export type SessionInfo = {
+  user: UserPublic | null;
+  /** ユーザーが1人もいない(初期設定が必要) */
+  needsSetup: boolean;
+  orgName: string;
+  version: string;
+};
+
+// ---------------------------------------------------------------------------
+// 設定
+// ---------------------------------------------------------------------------
+
+export type Criterion = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+export type Settings = {
+  orgName: string;
+  /** 同意文の {連絡先} に入る文言 */
+  contact: string;
+  criteria: Criterion[];
+  /** 評価スケールのラベル(1〜5の順) */
+  ratingLabels: string[];
+  /** 新規面接に入る質問リストの初期値(録画中のマーカーに使う) */
+  defaultQuestions: string[];
+  consent: {
+    title: string;
+    /** {団体名} {保存日数} {連絡先} を差し込める */
+    body: string;
+  };
+  retention: {
+    /** 判定確定から録画を削除するまでの日数 */
+    videoDaysAfterDecision: number;
+    /** 判定が出ないまま録画を保管する上限日数 */
+    videoDaysUndecided: number;
+  };
+  /** 自分の評価を提出するまで他の評価者の評価・メモを見せない */
+  blindEvaluation: boolean;
+  recording: {
+    videoBitsPerSecond: number;
+    width: number;
+    height: number;
+  };
+  /** Slack / Google Chat 互換の Incoming Webhook。null で無効 */
+  webhookUrl: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// 面接
+// ---------------------------------------------------------------------------
+
+export type Candidate = {
+  /** 表示名。イニシャルや受付番号でもよい */
+  displayName: string;
+  kana: string;
+  age: number | null;
+  /** 未成年(保護者の同意が必要) */
+  minor: boolean;
+  note: string;
+};
+
+export type ConsentRecord = {
+  /** 録画への同意 */
+  recording: boolean;
+  /** 表情の計測(録画の解析)への同意 */
+  analysis: boolean;
+  candidateName: string;
+  guardianName: string | null;
+  guardianRelation: string | null;
+  method: "onscreen" | "paper";
+  /** 提示した同意文の SHA-256(先頭12桁) */
+  consentVersion: string;
+  /** 提示した同意文そのもの(差し込み済み) */
+  consentText: string;
+  obtainedBy: string;
+  obtainedByName: string;
+  obtainedAt: string;
+  withdrawnAt: string | null;
+  withdrawnScope: "analysis" | "all" | null;
+};
+
+export type MarkerKind = "question" | "bookmark";
+
+export type Marker = {
+  id: string;
+  /** 録画開始からの ms */
+  tMs: number;
+  kind: MarkerKind;
+  label: string;
+};
+
+export type RecordingStatus =
+  | "uploading"   // チャンク受信中
+  | "processing"  // 結合・インデックス作成中
+  | "ready"       // 再生可能
+  | "failed"
+  | "purged"      // 保存期間経過で映像を削除(計測値は残す)
+  | "deleted";    // 手動削除(計測値も削除)
+
+export type RecordingMeta = {
+  id: string;
+  /** 端末側の録画ID。再送しても重複作成しないためのキー */
+  clientId: string;
+  source: "live" | "file";
+  status: RecordingStatus;
+  mimeType: string;
+  /** サーバー上の保存名(video.webm 等) */
+  fileName: string | null;
+  /** 取り込んだ動画の元のファイル名 */
+  originalName: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  chunkCount: number | null;
+  sizeBytes: number | null;
+  /** WebM に Cues/Duration を付与できたか(シークが速い) */
+  indexed: boolean;
+  /** 再生用の MP4(H.264)があるか。iPhone 等で再生するため(サーバーに ffmpeg がある場合) */
+  mp4Ready: boolean;
+  markers: Marker[];
+  /** 表情計測の状態 */
+  analysis: "none" | "ready" | "failed";
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  error: string | null;
+  purgedAt: string | null;
+};
+
+export type Vote = "pass" | "hold" | "fail";
+
+export type Decision = {
+  result: Vote;
+  reason: string;
+  decidedBy: string;
+  decidedByName: string;
+  decidedAt: string;
+};
+
+export type Interview = {
+  id: string;
+  candidate: Candidate;
+  scheduledAt: string | null;
+  location: string;
+  interviewerIds: string[];
+  questions: string[];
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  consent: ConsentRecord | null;
+  /** 同意が得られず録画せずに面接した */
+  recordingDeclined: boolean;
+  recordings: RecordingMeta[];
+  decision: Decision | null;
+};
+
+export type InterviewStatus =
+  | "scheduled"   // 録画前
+  | "uploading"   // 録画の送信・処理中
+  | "evaluating"  // 評価入力中
+  | "deciding"    // 評価が揃い、判定待ち
+  | "decided";    // 判定済
+
+export type InterviewListItem = {
+  id: string;
+  candidate: Candidate;
+  scheduledAt: string | null;
+  location: string;
+  interviewerIds: string[];
+  createdAt: string;
+  status: InterviewStatus;
+  consent: { recording: boolean; analysis: boolean } | null;
+  recordingDeclined: boolean;
+  recordingCount: number;
+  readyRecordingCount: number;
+  durationMs: number | null;
+  submittedCount: number;
+  expectedCount: number;
+  myEvaluation: "none" | "draft" | "submitted";
+  votes: Record<Vote, number> | null;
+  decision: Decision | null;
+};
+
+// ---------------------------------------------------------------------------
+// 評価・メモ
+// ---------------------------------------------------------------------------
+
+export type Evaluation = {
+  userId: string;
+  userName: string;
+  /** criterionId → 1〜5(未入力は null) */
+  ratings: Record<string, number | null>;
+  criterionComments: Record<string, string>;
+  vote: Vote | null;
+  comment: string;
+  status: "draft" | "submitted";
+  updatedAt: string;
+  submittedAt: string | null;
+};
+
+export type Note = {
+  id: string;
+  /** 録画に紐づくメモは recordingId と tMs を持つ。全体コメントは null */
+  recordingId: string | null;
+  tMs: number | null;
+  text: string;
+  userId: string;
+  userName: string;
+  createdAt: string;
+};
+
+export type EvaluationsView = {
+  mine: Evaluation | null;
+  /** 他の評価者の評価。非公開中は null */
+  others: Evaluation[] | null;
+  /** 非公開でも件数は見せる */
+  othersSubmittedCount: number;
+  othersVisible: boolean;
+  /** 管理者なので見えている(自分の評価は未提出)。画面では「表示する」を押すまで伏せる */
+  visibleBecauseAdmin: boolean;
+  /** 非公開の理由(表示用) */
+  hiddenReason: string | null;
+};
+
+export type NotesView = {
+  notes: Note[];
+  hiddenCount: number;
+};
+
+export type InterviewDetail = {
+  interview: Interview;
+  status: InterviewStatus;
+  interviewers: UserPublic[];
+  evaluations: EvaluationsView;
+  notes: NotesView;
+  criteria: Criterion[];
+  ratingLabels: string[];
+};
+
+// ---------------------------------------------------------------------------
+// 統計・監査
+// ---------------------------------------------------------------------------
+
+export type ExpressionStats = {
+  /** 解析済みの面接(1面接 = 顔が最も長く映っていた録画1本) */
+  items: { interviewId: string; values: Record<string, number | null> }[];
+};
+
+export type AuditEntry = {
+  ts: string;
+  userId: string | null;
+  userName: string | null;
+  action: string;
+  interviewId: string | null;
+  detail: string | null;
+  ip: string | null;
+};

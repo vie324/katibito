@@ -32,6 +32,22 @@ export type FaceFrame = {
 
 export type FaceProgress = (stage: string, fraction: number) => void;
 
+/** 複数顔の検出結果(運用版)。配列・オブジェクトは毎回新しく作る */
+export type FaceObservation = {
+  /** 正準順の blendshape スコア */
+  blend: Float32Array;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  box: { x0: number; y0: number; x1: number; y1: number };
+  landmarks: NormalizedLandmark[];
+};
+
+export type FaceEngineOptions = {
+  /** 同時に検出する顔の数(デモは1、運用版は面接官の映り込みを考えて3) */
+  numFaces?: number;
+};
+
 export class FaceEngine {
   readonly delegate: "GPU" | "CPU";
   private readonly landmarker: FaceLandmarker;
@@ -57,7 +73,7 @@ export class FaceEngine {
     this.delegate = delegate;
   }
 
-  static async create(onProgress: FaceProgress): Promise<FaceEngine> {
+  static async create(onProgress: FaceProgress, options: FaceEngineOptions = {}): Promise<FaceEngine> {
     onProgress("WASM を読み込み中", 0.05);
     const fileset = await FilesetResolver.forVisionTasks(ASSET_PATHS.WASM_DIR);
 
@@ -72,7 +88,7 @@ export class FaceEngine {
         outputFaceBlendshapes: true,
         outputFacialTransformationMatrixes: true,
         runningMode: "VIDEO",
-        numFaces: 1,
+        numFaces: options.numFaces ?? 1,
       });
 
     onProgress("推論エンジンを初期化中", 0.85);
@@ -113,6 +129,72 @@ export class FaceEngine {
       return frame;
     }
 
+    this.ensureMapping(categories);
+
+    this.blendOut.fill(0);
+    const map = this.modelToCanonical!;
+    for (let i = 0; i < categories.length; i++) {
+      const ci = map[i];
+      if (ci >= 0) this.blendOut[ci] = categories[i].score;
+    }
+
+    const matrix = result.facialTransformationMatrixes?.[0]?.data;
+    if (matrix) {
+      const e = matrixToEulerDeg(matrix);
+      frame.yaw = e.yaw * SIGNS.YAW_SIGN;
+      frame.pitch = e.pitch * SIGNS.PITCH_SIGN;
+      frame.roll = e.roll * SIGNS.ROLL_SIGN;
+    }
+
+    const b = boundingBox(landmarks);
+    frame.box.x0 = b.x0;
+    frame.box.y0 = b.y0;
+    frame.box.x1 = b.x1;
+    frame.box.y1 = b.y1;
+    frame.box.h = Math.max(0, b.y1 - b.y0);
+
+    frame.detected = true;
+    frame.landmarks = landmarks;
+    return frame;
+  }
+
+  /**
+   * 運用版: 映っている顔をすべて返す(候補者の選別は呼び出し側)。
+   * timestampMs は単調増加に補正して MediaPipe に渡す(§9-3)。
+   */
+  detectAll(source: HTMLVideoElement, timestampMs: number): FaceObservation[] {
+    const ts = Math.max(Math.round(timestampMs), this.lastSubmittedMs + 1);
+    this.lastSubmittedMs = ts;
+    const result = this.landmarker.detectForVideo(source, ts);
+    const out: FaceObservation[] = [];
+    const faces = result.faceLandmarks ?? [];
+    for (let f = 0; f < faces.length; f++) {
+      const categories = result.faceBlendshapes?.[f]?.categories;
+      const landmarks = faces[f];
+      if (!categories || !landmarks || landmarks.length === 0) continue;
+      this.ensureMapping(categories);
+      const blend = new Float32Array(BLEND_COUNT);
+      const map = this.modelToCanonical!;
+      for (let i = 0; i < categories.length; i++) {
+        const ci = map[i];
+        if (ci >= 0) blend[ci] = categories[i].score;
+      }
+      let yaw = 0;
+      let pitch = 0;
+      let roll = 0;
+      const matrix = result.facialTransformationMatrixes?.[f]?.data;
+      if (matrix) {
+        const e = matrixToEulerDeg(matrix);
+        yaw = e.yaw * SIGNS.YAW_SIGN;
+        pitch = e.pitch * SIGNS.PITCH_SIGN;
+        roll = e.roll * SIGNS.ROLL_SIGN;
+      }
+      out.push({ blend, yaw, pitch, roll, box: boundingBox(landmarks), landmarks });
+    }
+    return out;
+  }
+
+  private ensureMapping(categories: { categoryName: string }[]): void {
     if (this.modelToCanonical === null) {
       this.modelToCanonical = new Int32Array(categories.length);
       const names: Record<string, number> = {};
@@ -128,46 +210,25 @@ export class FaceEngine {
       // 付録B-2: 実際の名前を全件コンソールに出して確認できるようにする
       console.info("[faceEngine] blendshape names (model order):", names);
     }
-
-    this.blendOut.fill(0);
-    const map = this.modelToCanonical;
-    for (let i = 0; i < categories.length; i++) {
-      const ci = map[i];
-      if (ci >= 0) this.blendOut[ci] = categories[i].score;
-    }
-
-    const matrix = result.facialTransformationMatrixes?.[0]?.data;
-    if (matrix) {
-      const e = matrixToEulerDeg(matrix);
-      frame.yaw = e.yaw * SIGNS.YAW_SIGN;
-      frame.pitch = e.pitch * SIGNS.PITCH_SIGN;
-      frame.roll = e.roll * SIGNS.ROLL_SIGN;
-    }
-
-    let minX = 1;
-    let minY = 1;
-    let maxX = 0;
-    let maxY = 0;
-    for (const p of landmarks) {
-      if (p.x < minX) minX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y > maxY) maxY = p.y;
-    }
-    frame.box.x0 = minX;
-    frame.box.y0 = minY;
-    frame.box.x1 = maxX;
-    frame.box.y1 = maxY;
-    frame.box.h = Math.max(0, maxY - minY);
-
-    frame.detected = true;
-    frame.landmarks = landmarks;
-    return frame;
   }
 
   close(): void {
     this.landmarker.close();
   }
+}
+
+function boundingBox(landmarks: NormalizedLandmark[]): { x0: number; y0: number; x1: number; y1: number } {
+  let minX = 1;
+  let minY = 1;
+  let maxX = 0;
+  let maxY = 0;
+  for (const p of landmarks) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x0: Math.max(0, minX), y0: Math.max(0, minY), x1: Math.min(1, maxX), y1: Math.min(1, maxY) };
 }
 
 async function fetchWithProgress(
