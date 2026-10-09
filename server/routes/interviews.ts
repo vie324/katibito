@@ -403,6 +403,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
           rec.status = "deleted";
           rec.fileName = null;
           rec.analysis = "none";
+          rec.transcript = "none";
           rec.purgedAt = new Date().toISOString();
         } else if (rec.analysis !== "none") {
           // 映像は残し、顔トラックと集計だけ消す

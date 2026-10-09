@@ -11,6 +11,7 @@ import { LIVE_STALE_MS, type AppContext } from "./context";
 import { concatFiles, extensionFor, isWebm } from "./media";
 import { notifyRecordingReady } from "./notifications";
 import { scheduleTranscode } from "./transcode";
+import { scheduleTranscription } from "./transcribe";
 import { writeJsonAtomic } from "./store";
 import { indexWebm } from "./webm";
 
@@ -151,6 +152,7 @@ export async function finalizeRecording(ctx: AppContext, iid: string, rid: strin
     const latest = ctx.store.interviews.get(iid);
     if (latest) void notifyRecordingReady(ctx, latest, updated);
     void scheduleTranscode(ctx, iid, rid);
+    void scheduleTranscription(ctx, iid, rid).catch((e) => console.warn(`[recordings] ${iid}/${rid}: 文字起こしを予約できません`, e));
   } catch (e) {
     console.error(`[recordings] ${iid}/${rid}: 仕上げに失敗`, e);
     await rm(raw, { force: true }).catch(() => undefined);

@@ -45,6 +45,9 @@ export async function runRetention(ctx: AppContext, now = Date.now()): Promise<R
         await deleteRecordingFiles(ctx, iv.id, rec, true);
         rec.status = "purged";
         rec.fileName = null;
+        // 文字起こし(話した内容)も映像と一緒に消える(残すのは表情の集計の数値だけ)
+        rec.transcript = "none";
+        rec.transcriptError = null;
         rec.purgedAt = new Date(now).toISOString();
         purged++;
         changed = true;

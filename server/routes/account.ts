@@ -20,6 +20,8 @@ import type { AppContext } from "../context";
 import { HttpError, readJson, setCookie, type Ctx, type Router } from "../http";
 import { isAllowedWebhookUrl } from "../notify";
 import { newId, type UserRecord } from "../store";
+import { ffmpegPath } from "../transcode";
+import { whisperCli } from "../transcribe";
 
 function cookieSecure(app: AppContext, c: Ctx): boolean {
   return app.config.cookieSecure === "auto" ? c.secure : app.config.cookieSecure;
@@ -46,6 +48,9 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     needsSetup: store.users.size === 0,
     orgName: store.settings.orgName,
     version: APP_VERSION,
+    features: {
+      transcription: !!c.user && store.settings.transcription.enabled && !!whisperCli(app) && !!ffmpegPath(),
+    },
   }));
 
   // ---------------------------------------------------------------- 初期設定
@@ -325,6 +330,10 @@ export function parseSettings(body: Record<string, unknown>, current: Settings):
     access: {
       interviewerScope:
         body.access === undefined ? current.access.interviewerScope : oneOf(obj(body.access, "閲覧範囲").interviewerScope, "面接官の閲覧範囲", ["all", "assigned"] as const),
+    },
+    transcription: {
+      enabled:
+        body.transcription === undefined ? current.transcription.enabled : bool(obj(body.transcription, "文字起こし").enabled, "文字起こしの設定"),
     },
     security: (() => {
       if (body.security === undefined) return current.security;

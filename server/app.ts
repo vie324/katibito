@@ -12,6 +12,7 @@ import { HANDLED, HttpError, parseCookies, Router, sendError, sendJson, type Ctx
 import { resumeProcessing } from "./recordings";
 import { runRetention } from "./retention";
 import { ffmpegPath, resumeTranscodes } from "./transcode";
+import { resumeTranscriptions, whisperCli } from "./transcribe";
 import { registerAccountRoutes } from "./routes/account";
 import { registerAdminRoutes } from "./routes/admin";
 import { canView, registerInterviewRoutes } from "./routes/interviews";
@@ -75,6 +76,11 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
 
   if (log) {
     console.log(ffmpegPath() ? "[server] ffmpeg あり: 再生用の MP4 を作成します(iPhone 等で再生可能)" : "[server] ffmpeg なし: 録画は WebM のまま配信します");
+    console.log(
+      whisperCli(ctx) && ffmpegPath()
+        ? `[server] whisper.cpp あり: 録画の音声を文字起こしします(モデル ${config.transcription.model}、サーバー内で処理)`
+        : "[server] whisper.cpp なし: 文字起こしは使えません",
+    );
   }
 
   if (store.users.size === 0) {
@@ -190,6 +196,7 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
 
   await resumeProcessing(ctx);
   resumeTranscodes(ctx);
+  await resumeTranscriptions(ctx);
 
   let retentionTimer: ReturnType<typeof setInterval> | null = null;
   let retentionStartup: ReturnType<typeof setTimeout> | null = null;

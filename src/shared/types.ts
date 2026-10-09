@@ -18,6 +18,11 @@ export type SessionInfo = {
   needsSetup: boolean;
   orgName: string;
   version: string;
+  /** サーバーで使える機能 */
+  features: {
+    /** 文字起こし(whisper.cpp があり、設定で有効) */
+    transcription: boolean;
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -81,6 +86,10 @@ export type Settings = {
   access: {
     /** 面接官が見られる面接: all = すべて / assigned = 面接官に選ばれた面接と自分が登録した面接だけ(管理者はすべて) */
     interviewerScope: "all" | "assigned";
+  };
+  transcription: {
+    /** 録画の音声を文字起こしする(サーバーに whisper.cpp がある場合) */
+    enabled: boolean;
   };
   security: {
     /** 再生中の映像に見ている人の名前を薄く重ねる */
@@ -170,6 +179,9 @@ export type RecordingMeta = {
   markers: Marker[];
   /** 表情計測の状態 */
   analysis: "none" | "ready" | "failed";
+  /** 文字起こしの状態(サーバーに whisper.cpp がある場合) */
+  transcript: "none" | "queued" | "running" | "ready" | "failed";
+  transcriptError: string | null;
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -177,6 +189,34 @@ export type RecordingMeta = {
   purgedAt: string | null;
   /** 録画中(ライブで見られる)なら、その状態。応答だけに付く */
   live?: LiveInfo | null;
+};
+
+/** 文字起こし(録画の時刻つき) */
+export type TranscriptSegment = { startMs: number; endMs: number; text: string };
+
+export type Transcript = {
+  language: string;
+  model: string;
+  createdAt: string;
+  segments: TranscriptSegment[];
+};
+
+/** 文字起こしの準備状況(設定画面) */
+export type TranscriptionStatus = {
+  /** whisper-cli と ffmpeg があり、サーバーの設定で無効にされていない */
+  available: boolean;
+  /** 管理者の設定(文字起こしをする) */
+  enabled: boolean;
+  model: string;
+  modelReady: boolean;
+  /** モデルを取得中なら 0〜1 */
+  downloading: number | null;
+  /** いま処理中の録画の進み具合(0〜1) */
+  progress: { interviewId: string; recordingId: string; fraction: number } | null;
+  queued: number;
+  error: string | null;
+  /** 使えない理由 */
+  reason: string | null;
 };
 
 /** 録画中の録画の状態(録画している端末から数秒ごとに届く) */

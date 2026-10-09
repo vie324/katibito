@@ -14,6 +14,8 @@ import type {
   RecordingMeta,
   SessionInfo,
   Settings,
+  Transcript,
+  TranscriptionStatus,
   UserPublic,
   Vote,
 } from "../shared/types";
@@ -200,6 +202,8 @@ export const api = {
     }),
   trackGz: (id: string, rid: string) => request<ArrayBuffer>("GET", `${recPath(id, rid)}/track`),
   summary: (id: string, rid: string) => request<{ summary: ExpressionSummary }>("GET", `${recPath(id, rid)}/summary`),
+  transcript: (id: string, rid: string) => request<{ transcript: Transcript }>("GET", `${recPath(id, rid)}/transcript`),
+  requestTranscript: (id: string, rid: string) => request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/transcript`, {}),
   deleteRecording: (id: string, rid: string) => request<{ recording: RecordingMeta }>("DELETE", recPath(id, rid)),
   videoUrl: (id: string, rid: string) => `${recPath(id, rid)}/video`,
   mp4Url: (id: string, rid: string) => `${recPath(id, rid)}/video?format=mp4`,
@@ -213,6 +217,8 @@ export const api = {
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/reprocess`, {}),
 
   stats: () => request<ExpressionStats>("GET", "/api/stats/expression"),
+  transcriptionStatus: () => request<{ status: TranscriptionStatus }>("GET", "/api/admin/transcription"),
+  prepareTranscription: () => request<{ status: TranscriptionStatus }>("POST", "/api/admin/transcription/prepare", {}),
   audit: (limit = 300) => request<{ entries: AuditEntry[] }>("GET", `/api/audit?limit=${limit}`),
   runRetention: () => request<{ purged: number; staleRemoved: number }>("POST", "/api/admin/retention/run", {}),
   exportCsvUrl: "/api/export/interviews.csv",

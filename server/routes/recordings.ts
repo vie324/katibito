@@ -9,6 +9,7 @@ import type { AppContext } from "../context";
 import { HANDLED, HttpError, readBinary, readJson, type Router } from "../http";
 import { sendFileRange, servingType } from "../media";
 import { MP4_FILE } from "../transcode";
+import { readTranscript, scheduleTranscription, transcriptionStatus } from "../transcribe";
 import {
   canReprocess,
   chunkFile,
@@ -126,6 +127,8 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
         mp4Ready: false,
         markers: [],
         analysis: "none",
+        transcript: "none",
+        transcriptError: null,
         createdBy: c.user!.id,
         createdByName: c.user!.name,
         createdAt: now,
@@ -341,6 +344,30 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
     return HANDLED;
   });
 
+  // ---------------------------------------------------------------- 文字起こし
+  r.get("/api/interviews/:id/recordings/:rid/transcript", "user", async (c) => {
+    const rec = getRecording(app, c.params.id, c.params.rid);
+    if (rec.transcript !== "ready") throw new HttpError(404, "文字起こしはまだありません");
+    const transcript = await readTranscript(app, c.params.id, rec.id);
+    if (!transcript) throw new HttpError(404, "文字起こしはまだありません");
+    await auditView(app, c, "transcript_view", c.params.id, rec.id);
+    return { transcript };
+  });
+
+  // 文字起こしをやり直す(管理者)。モデルを変えたあとや、失敗したとき
+  r.post("/api/interviews/:id/recordings/:rid/transcript", "admin", async (c) => {
+    const rec = getRecording(app, c.params.id, c.params.rid);
+    if (rec.status !== "ready") throw new HttpError(409, "再生できる録画だけ文字起こしできます");
+    if (rec.transcript === "queued" || rec.transcript === "running") throw new HttpError(409, "文字起こしの順番待ち・処理中です");
+    const status = await transcriptionStatus(app);
+    if (!status.available) throw new HttpError(409, status.reason ?? "サーバーで文字起こしを使えません");
+    if (!(await scheduleTranscription(app, c.params.id, rec.id, true))) {
+      throw new HttpError(409, "この録画は文字起こしできません(録画への同意を確認してください)");
+    }
+    await audit(app, c, "transcript_request", c.params.id, rec.id);
+    return { recording: publicRecording(getRecording(app, c.params.id, rec.id)) };
+  });
+
   r.get("/api/interviews/:id/recordings/:rid/summary", "user", async (c) => {
     const rec = getRecording(app, c.params.id, c.params.rid);
     const summary = await loadSummary(app, c.params.id, rec);
@@ -398,6 +425,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       rec.status = "deleted";
       rec.fileName = null;
       rec.analysis = "none";
+      rec.transcript = "none";
       rec.purgedAt = new Date().toISOString();
       await store.saveInterview(iv);
       await audit(app, c, "recording_delete", iv.id, rec.id);

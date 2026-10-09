@@ -7,7 +7,8 @@ import { deriveStatus, STATUS_LABEL, submittedEvaluations, tallyVotes, VOTE_LABE
 import type { ExpressionStats } from "../../src/shared/types";
 import { int } from "../../src/shared/validate";
 import type { AppContext } from "../context";
-import { attachmentHeader, HANDLED, type Router } from "../http";
+import { attachmentHeader, HANDLED, HttpError, type Router } from "../http";
+import { ensureModels, transcriptionStatus } from "../transcribe";
 import { loadSummary } from "../recordings";
 import { runRetention } from "../retention";
 import { audit } from "./interviews";
@@ -50,6 +51,17 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
       items.push({ interviewId: iid, values });
     }
     return { items };
+  });
+
+  r.get("/api/admin/transcription", "admin", async () => ({ status: await transcriptionStatus(app) }));
+
+  // 文字起こしのモデルを先に取得しておく(最初の録画を待たずに)
+  r.post("/api/admin/transcription/prepare", "admin", async (c) => {
+    const status = await transcriptionStatus(app);
+    if (!status.available) throw new HttpError(409, status.reason ?? "サーバーで文字起こしを使えません");
+    void ensureModels(app).catch((e) => console.warn("[transcribe] モデルを取得できません", (e as Error).message));
+    await audit(app, c, "transcription_prepare", null);
+    return { status: await transcriptionStatus(app) };
   });
 
   r.get("/api/audit", "admin", async (c) => {

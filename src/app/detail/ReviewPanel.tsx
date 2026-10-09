@@ -13,6 +13,7 @@ import { useSession } from "../session";
 import { Notice, useConfirm, useToast } from "../ui";
 import { ExpressionSummaryView } from "./ExpressionSummaryView";
 import { ReviewTimeline } from "./ReviewTimeline";
+import { TranscriptPanel } from "./TranscriptPanel";
 import { HighlightList, NotesList, SegmentTable } from "./SceneLists";
 
 const REC_STATUS: Record<RecordingMeta["status"], string> = {
@@ -24,7 +25,7 @@ const REC_STATUS: Record<RecordingMeta["status"], string> = {
   deleted: "削除済み",
 };
 
-type SideTab = "scenes" | "segments" | "notes" | "marks";
+type SideTab = "scenes" | "segments" | "transcript" | "notes" | "marks";
 
 export function ReviewPanel({
   detail,
@@ -35,7 +36,7 @@ export function ReviewPanel({
   setDetail: (d: InterviewDetail) => void;
   stats: ExpressionStats | null;
 }) {
-  const { user } = useSession();
+  const { user, info } = useSession();
   const toast = useToast();
   const iv = detail.interview;
   const recs = iv.recordings.filter((r) => r.status !== "deleted");
@@ -267,6 +268,11 @@ export function ReviewPanel({
                   <button className={`tab ${side === "segments" ? "active" : ""}`} onClick={() => setSide("segments")}>
                     質問ごと
                   </button>
+                  {rec.transcript !== "none" || info?.features.transcription ? (
+                    <button className={`tab ${side === "transcript" ? "active" : ""}`} onClick={() => setSide("transcript")}>
+                      文字起こし
+                    </button>
+                  ) : null}
                   <button className={`tab ${side === "notes" ? "active" : ""}`} onClick={() => setSide("notes")}>
                     メモ{detail.notes.notes.length > 0 ? ` ${detail.notes.notes.length}` : ""}
                   </button>
@@ -283,6 +289,17 @@ export function ReviewPanel({
                     ))}
                   {side === "segments" &&
                     (summary ? <SegmentTable summary={summary} onSeek={seek} /> : <div className="muted small pad">表情の計測データがありません。</div>)}
+                  {side === "transcript" && (
+                    <TranscriptPanel
+                      iid={iv.id}
+                      rec={rec}
+                      onSeek={seek}
+                      getTimeMs={getTimeMs}
+                      onChanged={(r) =>
+                        setDetail({ ...detail, interview: { ...iv, recordings: iv.recordings.map((x) => (x.id === r.id ? r : x)) } })
+                      }
+                    />
+                  )}
                   {side === "notes" && (
                     <NotesList
                       notes={notes}

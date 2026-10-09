@@ -71,7 +71,9 @@ export function InterviewDetailPage({ id }: { id: string }) {
   }, [id]);
 
   // 録画の受信・処理中は状態を追う(まだ録画がない面接も、録画が始まったらライブで見られるように追う)
-  const processing = detail?.interview.recordings.some((r) => r.status === "uploading" || r.status === "processing");
+  const processing = detail?.interview.recordings.some(
+    (r) => r.status === "uploading" || r.status === "processing" || r.transcript === "queued" || r.transcript === "running",
+  );
   const waitingForRecording = !!detail && !detail.interview.decision && detail.interview.recordings.length === 0 && !!detail.interview.consent?.recording;
   useEffect(() => {
     if (!processing && !waitingForRecording) return;

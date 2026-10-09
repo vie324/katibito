@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { renderConsentText } from "../../shared/consent";
 import { DEFAULT_CONSENT_BODY, DEFAULT_CONSENT_TITLE, RECORDING_PRESETS } from "../../shared/defaults";
-import type { AuditEntry, InterviewTemplate, Settings, UserPublic } from "../../shared/types";
+import type { AuditEntry, InterviewTemplate, Settings, TranscriptionStatus, UserPublic } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { CriteriaEditor, QuestionPlanEditor } from "../components/TemplateEditors";
 import { formatDateTime } from "../format";
@@ -11,11 +11,12 @@ import { Link } from "../router";
 import { useSession } from "../session";
 import { Field, Loading, Modal, Notice, useAction, useToast } from "../ui";
 
-type Tab = "basic" | "templates" | "consent" | "retention" | "users" | "audit" | "export";
+type Tab = "basic" | "templates" | "features" | "consent" | "retention" | "users" | "audit" | "export";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "basic", label: "基本" },
   { key: "templates", label: "評価シート" },
+  { key: "features", label: "機能" },
   { key: "consent", label: "同意文" },
   { key: "retention", label: "保存期間" },
   { key: "users", label: "ユーザー" },
@@ -44,7 +45,7 @@ export default function SettingsPage() {
       toast("設定を保存しました");
     }
   };
-  const settingsTab = tab === "basic" || tab === "templates" || tab === "consent" || tab === "retention";
+  const settingsTab = tab === "basic" || tab === "templates" || tab === "features" || tab === "consent" || tab === "retention";
 
   return (
     <div className="page">
@@ -59,6 +60,7 @@ export default function SettingsPage() {
 
       {tab === "basic" && <BasicTab draft={draft} setDraft={setDraft} />}
       {tab === "templates" && <TemplatesTab draft={draft} setDraft={setDraft} />}
+      {tab === "features" && <FeaturesTab draft={draft} setDraft={setDraft} />}
       {tab === "consent" && <ConsentTab draft={draft} setDraft={setDraft} />}
       {tab === "retention" && <RetentionTab draft={draft} setDraft={setDraft} />}
       {tab === "users" && <UsersTab />}
@@ -137,6 +139,93 @@ function BasicTab({ draft, setDraft }: TabProps) {
           placeholder="https://hooks.slack.com/services/..."
         />
       </Field>
+    </div>
+  );
+}
+
+function FeaturesTab({ draft, setDraft }: TabProps) {
+  const [status, setStatus] = useState<TranscriptionStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
+
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .transcriptionStatus()
+        .then((r) => alive && setStatus(r.status))
+        .catch((e) => alive && setError(errorMessage(e)));
+    void load();
+    const t = setInterval(load, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+
+  return (
+    <div className="panel pad form">
+      <h3>文字起こし</h3>
+      <p className="muted small">
+        録画の音声を、サーバーの中で文字にします(whisper.cpp。外部のサービスには送りません)。録画の確認画面の「文字起こし」で、
+        話した内容を読んだり、ことばで探したりできます。同意文にも、文字起こしをすることを書いておいてください。
+      </p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={draft.transcription.enabled}
+          onChange={(e) => setDraft({ ...draft, transcription: { enabled: e.target.checked } })}
+        />
+        <span>録画が届いたら、自動で文字起こしをする</span>
+      </label>
+      {error && <Notice kind="error">{error}</Notice>}
+      {status && (
+        <div className="feature-status">
+          {status.available ? (
+            <>
+              <span className="ok-text">● このサーバーで使えます</span>
+              <span className="muted small">
+                モデル {status.model}
+                {status.modelReady ? "(準備済み)" : status.downloading !== null ? `(取得中 ${Math.round(status.downloading * 100)}%)` : "(未取得: 最初の文字起こしのときに取得します)"}
+              </span>
+              {status.progress && (
+                <span className="muted small">処理中 {Math.round(status.progress.fraction * 100)}%{status.queued > 0 ? ` ・ 順番待ち ${status.queued}件` : ""}</span>
+              )}
+              {!status.modelReady && status.downloading === null && (
+                <button
+                  className="quiet small"
+                  onClick={async () => {
+                    try {
+                      setStatus((await api.prepareTranscription()).status);
+                      toast("モデルの取得を始めました");
+                    } catch (e) {
+                      toast(errorMessage(e), "error");
+                    }
+                  }}
+                >
+                  いまモデルを取得する(約200MB)
+                </button>
+              )}
+              {status.error && <span className="warn-text small">直近のエラー: {status.error}</span>}
+            </>
+          ) : (
+            <span className="warn-text small">このサーバーでは使えません: {status.reason}</span>
+          )}
+        </div>
+      )}
+
+      <h3>映像の取り扱い</h3>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={draft.security.watermark}
+          onChange={(e) => setDraft({ ...draft, security: { ...draft.security, watermark: e.target.checked } })}
+        />
+        <span>
+          再生中の映像に、見ている人の名前と日付を薄く表示する(おすすめ)
+          <span className="muted small">— 画面の撮影や持ち出しを防ぐため</span>
+        </span>
+      </label>
     </div>
   );
 }
@@ -486,6 +575,11 @@ const ACTION_LABEL: Record<string, string> = {
   retention_purge: "保存期間による削除",
   retention_run: "保存期間の処理(手動)",
   export_csv: "CSV出力",
+  live_view: "ライブ視聴",
+  room_message: "面接室へのメッセージ",
+  transcript_view: "文字起こしの閲覧",
+  transcript_request: "文字起こしのやり直し",
+  transcription_prepare: "文字起こしのモデルの取得",
 };
 
 function AuditTab() {

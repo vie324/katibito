@@ -286,6 +286,7 @@ export function mergeSettings(saved: LegacySettings): Settings {
     recording: { ...d.recording, ...(saved.recording ?? {}) },
     access: { ...d.access, ...(saved.access ?? {}) },
     security: { ...d.security, ...(saved.security ?? {}) },
+    transcription: { ...d.transcription, ...(saved.transcription ?? {}) },
     ratingLabels: saved.ratingLabels ?? d.ratingLabels,
   };
 }
@@ -321,6 +322,8 @@ function normalizeInterview(iv: Interview, settings: Settings): Interview {
       markers: r.markers ?? [],
       originalName: r.originalName ?? null,
       mp4Ready: r.mp4Ready ?? false,
+      transcript: r.transcript ?? "none",
+      transcriptError: r.transcriptError ?? null,
       error: r.error ?? null,
       purgedAt: r.purgedAt ?? null,
     })),

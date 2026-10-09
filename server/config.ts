@@ -1,6 +1,7 @@
 // 環境変数からの設定読み込み。
 
 import { existsSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +24,19 @@ export type Config = {
   sessionTtlMs: number;
   /** 保存期間の削除処理の実行間隔 */
   retentionIntervalMs: number;
+  /** 文字起こし(whisper.cpp)。サーバー内で処理し、外部には送らない */
+  transcription: {
+    /** auto: whisper-cli が見つかれば使う / off: 使わない */
+    mode: "auto" | "off";
+    cli: string;
+    /** モデル名(ggml-<名前>.bin)。small-q5_1 / base / medium-q5_0 / large-v3-turbo-q5_0 など */
+    model: string;
+    /** モデルの置き場所(なければ最初に使うときに取得する)。null なら DATA_DIR/models */
+    modelsDir: string | null;
+    modelBaseUrl: string;
+    vadUrl: string;
+    threads: number;
+  };
 };
 
 function bool(v: string | undefined, d: boolean): boolean {
@@ -57,5 +71,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxTrackBytes: 64 * 1024 * 1024,
     sessionTtlMs: int(env.SESSION_DAYS, 14) * 24 * 3600_000,
     retentionIntervalMs: 6 * 3600_000,
+    transcription: {
+      mode: ["0", "false", "off", "no"].includes((env.TRANSCRIBE ?? "").toLowerCase()) ? "off" : "auto",
+      cli: env.WHISPER_CLI || "whisper-cli",
+      model: env.WHISPER_MODEL || "small-q5_1",
+      modelsDir: env.WHISPER_MODELS_DIR ? path.resolve(env.WHISPER_MODELS_DIR) : null,
+      modelBaseUrl: (env.WHISPER_MODEL_BASE_URL || "https://huggingface.co/ggerganov/whisper.cpp/resolve/main").replace(/\/+$/, ""),
+      vadUrl: env.WHISPER_VAD_URL || "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin",
+      threads: Math.max(1, int(env.WHISPER_THREADS, Math.max(1, availableParallelism() - 1))),
+    },
   };
 }
