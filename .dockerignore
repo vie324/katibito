@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-server
+data
+data-dev
+e2e-out
+smoke-out
+.git
+.env
+.env.*
+*.log

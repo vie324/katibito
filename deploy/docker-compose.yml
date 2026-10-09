@@ -1,0 +1,39 @@
+# 面接記録アプリ + Caddy(HTTPS 証明書を自動で取得)。
+# 使い方は docs/operations.md の「サーバーの設置」を参照。
+#   cp .env.example .env   # DOMAIN などを書き換える
+#   docker compose up -d --build
+#   docker compose logs app   # 初期設定コードが表示される
+
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data
+      TRUST_PROXY: "1"
+      APP_URL: https://${DOMAIN}
+      INITIAL_SETUP_CODE: ${INITIAL_SETUP_CODE:-}
+      TZ: Asia/Tokyo
+    volumes:
+      - ./data:/data
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

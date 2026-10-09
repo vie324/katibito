@@ -1,0 +1,219 @@
+# 面接記録(運用版)設計書 v0.2
+
+対象: 開発者・Claude Code(この文書と `docs/operations.md` が運用版の正本)
+前提となるデモの設計: [design-v0.1.md](design-v0.1.md)(`/demo` として残している)
+
+---
+
+## 0. 背景と要件
+
+**運用のイメージ:** 面接官3人が候補者1人と対面で面接する。判定者(管理者)はその場にいない。
+全員で判定したいので、同意を得て録画し、録画と表情の計測を合否の参考にする。
+
+| 要件 | 対応 |
+|---|---|
+| 録画の可否を本人(未成年は保護者)に確認する | 同意の記録(録画と表情の計測を別々に)。同意文の版(ハッシュ)と本文を保存 |
+| その場にいない人が録画を見られる | サーバーに集約。Cues 付き WebM + 再生用 MP4 で遠隔でも即シーク |
+| 表情の分析を判定の参考にする | 録画中にブラウザ内で計測 → サーバーで集計。注目シーン・質問ごと・タイムライン |
+| みんなで判定する | 面接官ごとの評価(非公開ルール付き)→ 管理者が判定 |
+| 実際に運用できる | 認証・権限、送信の再開、保存期間、同意の取り消し、操作ログ、CSV、Docker + HTTPS |
+
+### デモ(v0.1)から変えた判断
+
+1. **音声・言語の特徴を使わない。** マイク1本の部屋では面接官の声が混ざるため、主張性の軸(声量・応答潜時・発話速度・語彙)は
+   候補者の特徴として成立しない。顔の動きだけで集計し、4象限・接し方ガイドは運用版では出さない
+2. **合否スコアは作らない(デモと同じ)。** 計測は「どう見えたか」の記録。合否は面接官の評価から人が決める。
+   画面・同意文・運用ガイドの全部にこの前提を書く
+3. **複数人の比較は条件つきで出す。** 暫定基準(欧米データ由来)だけでは解釈できないため、
+   自分たちの過去の面接(信頼度「低」を除き10件以上)の分布の中での位置を出す。順位付けの文言は使わない
+4. **映像を保存する。** デモは映像を保存しなかったが、運用では「録画を見る」こと自体が主目的。
+   保存期間・削除・同意の取り消しで管理する
+
+---
+
+## 1. 構成
+
+```
+[録画用PC(Chrome)]                         [サーバー(Node.js 22、依存なし)]
+ MediaRecorder(WebM 2秒ごと)──▶ IndexedDB ──▶ PUT /chunks/:i ──▶ data/interviews/<id>/recordings/<rid>/chunks/
+ MediaPipe(15fps)→ 候補者の追跡 → 顔トラック ─▶ PUT /track(gzip)──▶ 集計(src/analysis)→ summary.json
+                                                POST /complete ──▶ 結合 → WebM 索引付け(Cues/Duration)→ video.webm
+                                                                 └▶ ffmpeg(あれば)→ playback.mp4
+[確認する人のブラウザ] ◀── Range 配信 / summary / track ── 
+```
+
+- **クライアント:** Vite + React 18 + TypeScript。ルーターは自前(`src/app/router.tsx`)
+- **サーバー:** `node:http` のみ(`server/`)。データはファイル(JSON + 録画)。Vite で `dist-server/main.js` 1ファイルにまとめる
+- **共有コード:** `src/analysis`(顔トラック・集計・系列)、`src/shared`(型・検証・同意文・状態)はクライアントとサーバーの両方で使う
+- **デモ:** `src/demo/DemoApp.tsx`(`/demo`)。エンジン(`src/engine`)と設定(`src/config`)はデモと共有
+
+---
+
+## 2. 表情の計測
+
+### 2.1 顔トラック(`src/analysis/faceTrack.ts`)
+
+録画1本の「候補者の顔」の時系列。計測の正本で、ここから何度でも集計し直せる。
+
+| 項目 | 型 | 内容 |
+|---|---|---|
+| t | u32 | 録画開始(MediaRecorder の start)からの ms |
+| detected | u8 | 候補者の顔が取れた |
+| faces | u8 | フレーム内の顔の数 |
+| blend | u8×52 | blendshape(正準順)× 255 |
+| yaw/pitch/roll | i16 | 度 × 100 |
+| box | u16×4 | 顔の枠(正規化 × 65535) |
+| rms / voiced | u16 / u8 | 音量(タイムライン表示用。集計には使わない) |
+
+バイナリ(`KTFT` v1、リトルエンディアン)+ gzip で送る。30分・15fps で約0.8MB。
+
+### 2.2 候補者の追跡(`src/analysis/candidate.ts`)
+
+MediaPipe を `numFaces: 3` で動かし、毎フレーム「候補者の顔」を1つ選ぶ。
+
+- 未選択: いちばん大きい顔(撮影準備の画面でクリックして選び直せる)
+- 追跡: 前回位置から「顔の高さ × 1.2」以内の最も近い顔。範囲外なら見失い扱い
+- 見失い: 1.5秒後から、最後の位置の近く(映像の高さの30%以内)でだけ再捕捉する。遠くの面接官には乗り換えない
+
+### 2.3 集計(`src/analysis/expression.ts`)
+
+特徴量の定義はデモと同じ `src/engine/features.ts` を通す(1か所で定義)。対面面接用に次を足した。
+
+| 指標 | 定義 |
+|---|---|
+| smilePerMin | `SMILE_ON` 超えが 0.4 秒以上続いた回数 / 計測できた分(終了は `SMILE_ON × 0.7` のヒステリシス) |
+| lookDownRatio | pitch が**録画全体の中央値**から +15° 以上(うなずき方向)のフレーム割合。カメラの高さ・傾きに依存しないよう相対で見る |
+| expressiveness | `scoreAxis("expressiveness")` を顔の特徴だけで再正規化(f0CV・感情語は欠測扱い) |
+
+**解析が止まった区間の扱い:** フレーム間隔の中央値(実効の解析間隔)の3倍かつ1秒以上空いた区間を「顔なし」で埋める。
+埋めないと1分あたりの指標が過大になり、逆に固定の目標間隔で判定すると遅い端末で通常の間隔まで「顔なし」になる(実測で計測率27%になった不具合の対策)。
+実効レートが毎秒6回未満なら、うなずき・まばたき(速い動き)は出さない。
+
+**区切り:** 質問マーカーごとに区間を作る(最初の質問の前が10秒以上あれば「質問前」)。ブックマークは区間を作らない。
+
+**注目シーン:** 笑顔のピーク(0.5秒移動平均、0.25以上)、表情量の標準偏差のピーク(3秒窓)、顔が映っていない区間(3秒以上)。
+種類ごとに上位5件、15秒以上離す。
+
+**品質(信頼度):** 顔の計測率(80% / 50%)、顔の高さの中央値(映像の12% / 7%)、計測できた時間(120秒 / 30秒)、
+複数の顔が映る割合(30%超で注意)、解析停止の割合(10%超)、実効レート(6回/秒・2回/秒)で 高/中/低。
+「低」のときは数値を薄く表示し、「映像そのもので確認」と出す。
+
+定数はすべて `src/config/scoring.ts` の `INTERVIEW_ANALYSIS`。**変えたら `VERSION` を上げる**
+(サーバーは保存済みの顔トラックから自動で集計し直す)。
+
+### 2.4 実機で確認すること
+
+1. **頭部姿勢の符号** — うなずいたとき pitch が正に振れること(`SIGNS.PITCH_SIGN`)。下を向いていた割合の向きに効く
+2. **頬(cheekSquint)** — 現行モデルではほぼ 0 になる。「頬の上がりを伴う笑顔」は参考値のまま扱う
+3. **端末の解析レート** — 要約に「毎秒◯回」と出る。15回前後が目安。極端に低ければ GPU が使われていない可能性
+
+---
+
+## 3. 録画と送信
+
+- `MediaRecorder`(`video/webm;codecs=vp8,opus` 優先、2秒ごと)→ IndexedDB(`src/app/record/localStore.ts`)
+- 送信(`uploader.ts`)は録画中から順次。サーバーの受信済みチャンクを確認して続きから送る。
+  複数タブでは Web Locks で1タブだけが送る。401 はログイン待ち、5xx・通信断は指数バックオフ、4xx は停止して「再試行/破棄」
+- 落ちたとき: 録画中の心拍(5秒ごと)が30秒以上止まった録画を「停止」として回収し、書けたところまで送る。
+  顔トラックは20秒ごとに保存しているので、そこまでの計測も残る
+- IndexedDB に書けない(容量不足)ときは、そのタブのメモリに退避して送信が終わるまで保持する
+- 録画中は Wake Lock(画面の消灯防止)。タブ非表示の時間は顔トラックの `gaps` に記録
+
+### サーバー側の仕上げ(`server/recordings.ts`)
+
+1. チャンクを結合
+2. WebM なら `server/webm.ts` で **Duration・Cues・SeekHead を付けて書き直す**(Cluster はバイト単位でコピー)。
+   Chrome の MediaRecorder はサイズ不明・Cues なしで書くため、そのままだと遠隔で後半へシークするたびに先頭から全部読まれる
+   (実測: 3分の録画で終盤へのシークに15.6MB全量。索引付け後は末尾の索引と目的位置だけ)
+3. 途中で途切れた WebM は最後の完全な要素で切り詰める
+4. ffmpeg があれば再生用 MP4(H.264/AAC、faststart)を低優先度で1本ずつ作る。クライアントは `<source>` で MP4 → 元の形式の順に指定
+
+---
+
+## 4. データ
+
+```
+DATA_DIR/
+  users.json  sessions.json  settings.json
+  audit/YYYY-MM.jsonl
+  interviews/<id>/interview.json        面接・同意・録画メタ・判定
+  interviews/<id>/evaluations/<uid>.json
+  interviews/<id>/notes.json
+  interviews/<id>/recordings/<rid>/{chunks/, video.webm, playback.mp4, track.bin.gz, summary.json}
+```
+
+- 書き込みは一時ファイル + rename。同じ面接への読み書きは `Store.withLock` で直列化
+- 面接の削除はディレクトリごと。操作ログには候補者の氏名を書かない
+- 状態(録画前・送信中・評価入力中・判定待ち・判定済)は保存せず `src/shared/status.ts` で導出
+
+### 保存期間(`server/retention.ts`、6時間ごと)
+
+| 対象 | 期限 | 消すもの |
+|---|---|---|
+| 判定済みの録画 | 判定から `videoDaysAfterDecision`(既定90日) | 映像・MP4・顔トラック(集計の数値は残す) |
+| 未判定の録画 | 録画から `videoDaysUndecided`(既定180日) | 同上 |
+| 完了しなかったアップロード | 7日 | すべて |
+
+---
+
+## 5. API(すべて `/api`)
+
+| メソッド・パス | 権限 | 内容 |
+|---|---|---|
+| GET /session, POST /setup, POST /login, POST /logout | なし | セッション・初期設定・ログイン |
+| POST /me/password | ログイン | パスワード変更 |
+| GET /users ・ POST /users ・ PATCH /users/:id | ログイン / 管理者 | ユーザー |
+| GET /settings ・ PUT /settings | ログイン / 管理者 | 設定 |
+| GET /interviews ・ POST /interviews | ログイン | 一覧・登録 |
+| GET・PATCH・DELETE /interviews/:id | ログイン(削除は管理者) | 詳細・編集・削除 |
+| POST /interviews/:id/consent ・ /consent/withdraw | ログイン / 管理者 | 同意の記録・取り消し |
+| PUT /interviews/:id/evaluations/me | ログイン | 自分の評価(下書き・提出) |
+| POST・DELETE /interviews/:id/notes | ログイン | メモ |
+| PUT・DELETE /interviews/:id/decision | 管理者 | 判定・取り消し |
+| POST /interviews/:id/recordings | ログイン | 録画の作成(端末側IDで冪等) |
+| GET /interviews/:id/recordings/:rid | ログイン | 状態と受信済みチャンク |
+| PUT …/chunks/:index ・ POST …/complete ・ POST …/abort | ログイン | 送信・完了・取り消し |
+| PUT・GET …/track ・ GET …/summary ・ PUT …/markers | ログイン | 顔トラック・集計・区切り |
+| GET …/video(`?format=mp4`) | ログイン | Range 配信 |
+| DELETE …/recordings/:rid | 管理者 | 録画の削除 |
+| GET /stats/expression | ログイン | 過去の面接との比較用 |
+| GET /audit ・ GET /export/interviews.csv ・ POST /admin/retention/run | 管理者 | 操作ログ・CSV・保存期間の処理 |
+
+### 評価の公開範囲(`evaluationVisibility`)
+
+`blindEvaluation` が有効なら、他人の評価・メモ・票の内訳は、(a) 自分が提出済み (b) 判定済み (c) 管理者 のときだけ返す。
+(c) の場合は画面で「表示する」を押すまで伏せる(管理者も先入観なしに評価できるように)。
+
+---
+
+## 6. セキュリティ
+
+- パスワード: scrypt(N=2^15)。ログイン失敗は IP+ID で15分8回、IP で30回まで
+- セッション: 32バイト乱数のトークンを HttpOnly / SameSite=Lax Cookie に。サーバーには SHA-256 だけ保存
+- CSRF: 状態を変えるリクエストは独自ヘッダ `X-Requested-With: katibito` 必須 + Origin 照合
+- 初期設定: ユーザーが0人のときだけ、起動ログに出るコードで管理者を作れる
+- ファイル: ID は `^[A-Za-z0-9_-]{6,64}$` のみパスに使う。静的配信はルート外を返さない
+- 受信の上限: JSON 1MB(設定 256KB)、チャンク 32MB、顔トラック 64MB(展開後 256MB)
+- 画面の CSP: `default-src 'self'`、`script-src 'self' 'wasm-unsafe-eval'`(MediaPipe)、`connect-src 'self'`(外部送信なし)
+- 同意: 録画の作成は `consent.recording`、顔トラックは `consent.analysis` がないと受け付けない(取り消し後も)
+
+---
+
+## 7. テスト
+
+| コマンド | 内容 |
+|---|---|
+| `npm test` | 単体・結合テスト(顔トラック、追跡、集計、WebM 索引付け、サーバー API の一連の流れ、デモのエンジン) |
+| `npm run e2e` | 実ブラウザ(Chromium)で運用の全工程。合成カメラに MediaPipe のテスト画像の顔を映し、笑顔・顔なし区間が検出されることまで確認 |
+| `npm run smoke` | デモ(`/demo`)のスモークテスト |
+
+`tests/fixtures/chrome-recording*.webm` は Chromium の MediaRecorder の実出力(人物なし)。作り直しは `scripts/fixtures/record-webm.mjs`。
+
+---
+
+## 8. 今後の課題
+
+- 候補者の発話区間の推定(口の動き × 音声)。面接官の声と分けられれば、応答までの間などを出せる
+- キャリブレーション: 面接の評価と計測値の関係を見て、暫定基準(NORMS)を自分たちのデータに置き換える
+- タブレット(背面カメラ)での録画の検証(Safari の MediaRecorder は MP4 を書く)
+- 2要素認証、IP 制限

@@ -1,5 +1,8 @@
 # AI面接 行動シグナル解析デモ — 設計書 v0.1
 
+> この文書は商談用デモ(現在の `/demo`)の設計書です。対面面接の録画・評価・判定を扱う運用版は
+> [design-ops-v0.2.md](design-ops-v0.2.md) と [operations.md](operations.md) を参照してください。
+
 対象: Claude Code(初回実装用)
 スコープ: 解析エンジンとデモUIのみ。ATS本体は含まない。
 

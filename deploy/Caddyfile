@@ -1,0 +1,33 @@
+# DOMAIN(例: interview.example.jp)の HTTPS 証明書は Caddy が自動で取得・更新する。
+# 事前に DNS で DOMAIN をこのサーバーに向け、80/443 番ポートを開けておくこと。
+
+{$DOMAIN} {
+	# 録画のチャンク(既定で最大32MB)を受け取れるように
+	request_body {
+		max_size 64MB
+	}
+
+	# テキスト系だけ圧縮する(動画は圧縮しない。Range 配信を壊さないため)
+	encode {
+		gzip
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	reverse_proxy app:8787 {
+		flush_interval -1
+		transport http {
+			read_timeout 10m
+			write_timeout 10m
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}
