@@ -12,3 +12,12 @@ public/wasm/
 .DS_Store
 *.log
 smoke-out/
+
+# 運用データ(録画・評価)。絶対にコミットしない
+data/
+data-dev/
+dist-server/
+e2e-out/
+
+# 例示用の環境変数ファイルはコミットする
+!.env.example
