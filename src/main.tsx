@@ -5,8 +5,9 @@ import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "./styles/tokens.css";
 import "./styles/app.css";
+import "./styles/ops.css";
 
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import { Root } from "./app/Root";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")!).render(<Root />);

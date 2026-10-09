@@ -1,4 +1,4 @@
-// ヘッドレススモークテスト(§13 受入基準の自動確認)。
+// デモ(/demo)のヘッドレススモークテスト(§13 受入基準の自動確認)。運用版の確認は scripts/e2e.mjs。
 // - サンプル経路: カメラなしでも サンプル再生 → 結果画面 まで通ること
 // - ライブ経路: フェイクカメラ(顔なし)でも チェック無視 → 3問 → 結果(確信度 低)まで落ちないこと
 // 実行: npm run build && node scripts/smoke.mjs
@@ -110,7 +110,7 @@ try {
     const consoleErrors = [];
     page.on("pageerror", (e) => consoleErrors.push(`pageerror: ${e.message}`));
 
-    await page.goto(BASE);
+    await page.goto(`${BASE}/demo`);
     await page.waitForSelector("text=環境チェック", { timeout: 30_000 });
     log("サンプル経路: 環境チェック画面に到達(モデル読み込みOK)");
     await page.screenshot({ path: path.join(outDir, "1-gate-denied.png") });
@@ -148,7 +148,7 @@ try {
     const consoleErrors = [];
     page.on("pageerror", (e) => consoleErrors.push(`pageerror: ${e.message}`));
 
-    await page.goto(BASE);
+    await page.goto(`${BASE}/demo`);
     await page.waitForSelector("text=環境チェック", { timeout: 30_000 });
     await page.waitForTimeout(4_000); // サンプリングを回す
     await page.screenshot({ path: path.join(outDir, "4-gate-fake-camera.png") });

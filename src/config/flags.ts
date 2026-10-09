@@ -16,7 +16,7 @@ export const FLAGS = {
   ENABLE_REPLAY_EXPORT: true,
 } as const;
 
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.2.0";
 
 /** カメラ・マイクの取得条件。
  *  autoGainControl は必ず false — AGC が効くと声量(rmsMean)が計測にならない。

@@ -1,18 +1,21 @@
 {
-  "name": "kikai-signal-demo",
+  "name": "katibito-interview",
   "private": true,
-  "version": "0.1.0",
-  "description": "面接の受け答えから行動シグナル(主張性・感情表出性)をリアルタイム可視化するデモ。ブラウザ完結・バックエンドなし。",
+  "version": "0.2.0",
+  "description": "面接の録画・表情の計測・面接官の評価と判定をまとめて扱う運用アプリ(対面面接向け)。行動シグナル解析デモ(/demo)を含む。",
   "type": "module",
   "scripts": {
     "vendor": "node scripts/vendor-assets.mjs",
-    "predev": "npm run vendor",
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "vite-node --watch server/main.ts",
     "prebuild": "npm run vendor",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && vite build --config vite.server.config.ts",
+    "start": "node dist-server/main.js",
     "preview": "vite preview",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
+    "e2e": "node scripts/e2e.mjs",
+    "e2e:upload": "node scripts/e2e-upload.mjs",
     "typecheck": "tsc --noEmit",
     "generate:sample": "vite-node scripts/generate-sample.ts"
   },
@@ -34,5 +37,8 @@
     "vite": "^6.0.3",
     "vite-node": "^3.2.4",
     "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

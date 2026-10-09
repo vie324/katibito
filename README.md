@@ -1,117 +1,103 @@
-# 行動シグナル解析 — デモ
+# 面接記録 — 録画・表情の計測・合議での判定
 
-面接の受け答えから「主張性」「感情表出性」の2軸をリアルタイムに可視化し、
-終了後に4象限への分類と**根拠となった行動指標**を提示するデモ。
-設計書は [docs/design-v0.1.md](docs/design-v0.1.md)。
+面接官3人 × 候補者1人の対面面接を、**同意を得て録画**し、その場にいない担当者も含めて
+**録画・表情の計測・面接官の評価**を見ながら判定するための運用アプリです。
 
-- ブラウザ完結(Vite + React 18 + TypeScript)。バックエンド・DBなし
-- 映像・表情・音響の解析はすべて端末内。モデル・WASM・フォントはローカル同梱で、
-  **実行時に外部通信なし**(例外は下記の Web Speech API のみ)
-- 合否判定・感情分類・属性推定は実装しない(設計書 §1 / §14)
-- デモ1回 = キャリブレーション用データ1件(セッションJSONエクスポート)
+- 同意の取得(本人・保護者、録画と表情の計測を別々に)→ 録画 → 自動送信 → 確認 → 評価 → 判定
+- 表情の計測は録画中にブラウザ内で行い、注目シーン・質問ごとの集計・タイムラインとして表示
+- 面接官の評価は「自分が提出するまで他の人の評価が見えない」方式
+- **合否は人が決めます。** 表情の計測は参考資料で、合否スコアや感情・性格の推定は行いません
+- 自前のサーバー(Node.js 22、Docker 可)にデータを集約。外部サービスに映像を送りません
 
-## クイックスタート
+使い方・設置・データの扱いは **[運用ガイド](docs/operations.md)**、技術的な設計は **[設計書 v0.2](docs/design-ops-v0.2.md)**。
+紙の同意書のひな形は [docs/consent-form.md](docs/consent-form.md)。
+
+商談用の「行動シグナル解析デモ」(v0.1)は `/demo` に残しています(下記)。
+API サーバーのない静的ホスティング(Vercel など)で公開した場合は、どのページを開いてもこのデモが表示されます
+(運用版はサーバーが必要なため。`vercel.json` は `/demo` などへの直接アクセス用の設定です)。
+
+## すぐに試す
 
 ```bash
-npm install
-npm run dev        # 事前に vendor(WASM コピー)が自動で走る
+npm ci
+npm run build
+npm start                 # http://localhost:8787 (起動ログに「初期設定コード」が出る)
 ```
 
-デスクトップ Chrome で開く。ビルドは `npm run build` → `dist/` を静的配信
-(Vercel にそのままデプロイ可能)。
+開発時は `npm run dev`(API サーバーと Vite を同時に起動。画面は http://localhost:5173、データは `data-dev/`)。
 
-### アセットの同梱(§3)
+本番は Docker + Caddy(HTTPS 自動)で設置します:
 
-- `public/models/face_landmarker.task`(3.7MB)はリポジトリにコミット済み
-- `public/wasm/` は `npm run vendor`(dev/build 前に自動実行)で
-  `node_modules/@mediapipe/tasks-vision/wasm` からコピーされる
-- モデルを差し替える場合は `scripts/vendor-assets.mjs` の URL を変更
-
-## 商談前チェックリスト
-
-1. `npm run build && npm run preview` をデモ機で一度通す
-2. **ネットワークを切って**ひととおり触る(音声認識以外は全機能が動くこと)
-3. カメラを塞いで「サンプルを再生」が最後まで通ることを確認
-4. 会場で環境チェックが通らないときは「チェックを無視して開始」
-   (結果の確信度は自動的に「低」になる)
+```bash
+cd deploy && cp .env.example .env    # DOMAIN を設定
+docker compose up -d --build
+docker compose logs app              # 初期設定コード
+```
 
 ## 検証
 
 ```bash
-npm test           # エンジンの単体テスト(語彙規則・スコアリング・DSP・識別力/再現性)
-npm run smoke      # ヘッドレスChromeで サンプル経路 / ライブ縮退経路 を完走確認
+npm test          # 単体・結合テスト(集計・候補者の追跡・WebM 索引付け・サーバー API の全工程・デモのエンジン)
+npm run e2e       # 実ブラウザで運用の全工程(要 npm run build)。スクリーンショットは e2e-out/
+npm run e2e:upload  # 録画の送信の回復(データの欠け・サーバー側の失敗)を実ブラウザで確認
+npm run smoke     # デモ(/demo)のスモークテスト
+npm run typecheck
 ```
 
-`npm test` には受入基準(§13)の自動化が含まれる:
-高プロファイル(大声・笑顔多め)と低プロファイル(小声・無表情)の合成セッションで
-**両軸25ポイント以上の差**、同一条件2回で**10ポイント以内の再現性**を
-実際の抽出・採点コードパスに対して検証している。
-
-## チューニング
-
-**すべて `src/config/scoring.ts` で完結する**(§13)。
-
-- `NORMS` — 各特徴量の正規化帯域(現在値はキャリブレーション前の暫定値。
-  日本語話者では `smileRate` / `browActivity` の `high` が高すぎる可能性が高い)
-- `WEIGHTS` — 2軸の重み(各軸合計1.0)
-- `SIGNAL` — VAD・F0・表情閾値などの抽出パラメータ
-- `SIGNS` — 頭部姿勢の符号(下記「実機で確認する3点」)
-- `GATE` / `CONFIDENCE` / `LIVE` — 環境チェック・確信度・ライブ表示
-
-**帯域を変えたら `NORMS_VERSION` を必ず上げる。** 過去のセッションJSONは
-`normsVersion` を持っているので、生値(`features`)から新基準で再計算できる。
-
-## キャリブレーションデータの貯め方(§8)
-
-1. デモ後に「結果をJSONで保存」→ 1件たまる
-2. JSONの `groundTruth: null` に、後から他者評価(人手ラベル)を追記する
-3. `aggregate.features` は生値なので、`NORMS` を差し替えても再採点できる
-
-`sample-session.json` を実データから作り直すときは、結果画面の
-「リプレイ用データを保存(開発用)」で落としたファイルを `public/sample-session.json` に
-置く。合成データから再生成する場合は `npm run generate:sample`。
-
-## Web Speech API についての但し書き(§3)
-
-Chrome の音声認識は**音声を Google のサーバーに送信する**。このため:
-
-- 環境チェック画面に明示し、トグルでオフにできる(オフでも表情+音響で動作。
-  言語系指標は無効になり、確信度が1段下がる)
-- 「映像も音声も端末外に出ない」という説明はこの構成ではできない。
-  **本番では Whisper を自社エンドポイントに置く前提**(設計書に明記)
-
-## 接し方ガイドと Claude API(§7)
-
-デフォルトはテンプレート生成で、**キーがなくても必ず動く**。
-ビルド時に `VITE_ANTHROPIC_API_KEY` を設定した場合のみ、Claude API
-(`claude-opus-5`、公式 TypeScript SDK)で文章生成を試み、
-タイムアウト・失敗・禁止表現(推奨/非推奨・性格断定・感情言及)の混入時は
-テンプレートに差し戻す。API 経路にはリフューザル時のサーバーサイド・フォールバック
-(`fallbacks: "default"`)を有効にしてある。キー未設定でビルドすると
-SDK はバンドルから除去される。
-
-⚠️ ブラウザにキーが埋まる構成なので、デモ端末以外に配布するビルドではキーを入れないこと。
-
-## 実機で確認する3点(付録B)
-
-1. **頭部姿勢の符号** — うなずいて pitch が正に振れるか目視確認。
-   逆なら `src/config/scoring.ts` の `SIGNS.PITCH_SIGN` を `-1` に
-2. **blendshape の名前** — 起動後の初回検出時に全52件がコンソールに出る。
-   未知名の warn が出ていないか確認(正準リストは `src/engine/blendshapeNames.ts`)
-3. **F0 の妥当性** — 男性話者で2倍の値が続く場合は
-   `SIGNAL.F0_OCTAVE_TOL` / 探索範囲を調整(推定器は「最小ラグ側の最初の有意ピーク」方式)
+`npm run e2e` は合成カメラに MediaPipe のテスト画像の顔を映して、録画 → 送信 → Cues 付き再生 →
+表情の計測(笑顔の場面・顔が映っていない区間の検出)→ 非公開ルール付きの評価 → 判定 → 動画の取り込み、までを確認します。
 
 ## 構成
 
 ```
-src/config/    NORMS・WEIGHTS・閾値・設問・語彙辞書・ガイド文 — チューニングはここだけ
-src/engine/    MediaPipe/音響/音声認識ラッパ、リングバッファ、特徴量、採点、セッション記録
-src/ui/        環境チェック、設問ランナー、メーター、4象限トレース、結果画面、タイムライン
-scripts/       アセット同梱、サンプル生成(合成プロファイル)、スモークテスト
-tests/         エンジン単体テスト + 受入基準(識別力・再現性)
+server/            API サーバー(node:http、依存なし)。認証・面接・録画の受信と索引付け・評価・判定・保存期間・操作ログ
+src/app/           運用画面(一覧・登録・撮影・確認・評価・判定・設定)
+src/app/record/    録画(MediaRecorder → IndexedDB → 送信)、表情の計測、同意フォーム
+src/app/detail/    確認画面(タイムライン・注目シーン・質問ごと・要約・評価・判定)
+src/analysis/      顔トラック形式・候補者の追跡・表情の集計・タイムライン系列(サーバーとクライアントで共有)
+src/shared/        型・入力検証・同意文・状態の導出(共有)
+src/engine/        MediaPipe・音響・特徴量・採点(デモと共有)
+src/config/        しきい値・基準値(scoring.ts の INTERVIEW_ANALYSIS が運用版の集計設定)
+src/demo/          行動シグナル解析デモ(/demo)
+deploy/            docker-compose + Caddyfile
+docs/              運用ガイド・設計書・同意書のひな形
+tests/             テスト(fixtures/ に Chromium の録画の実出力)
+scripts/           e2e・スモーク・素材の同梱・開発サーバー
 ```
 
-## スコープ外(§14)
+## チューニング
 
-感情分類 / 合否・適性スコア / 複数人比較 / 認証・サーバー / 映像音声のアップロード /
-属性推定 / モバイル対応。これらは意図的に実装していない。
+運用版の表情の集計は `src/config/scoring.ts` の `INTERVIEW_ANALYSIS` と、デモと共有の `SIGNAL`(笑顔・眉のしきい値)・
+`NORMS`(暫定基準)で決まります。**集計に効く値を変えたら `INTERVIEW_ANALYSIS.VERSION` を上げてください。**
+サーバーは保存済みの顔トラックから自動で集計し直します(録画をやり直す必要はありません)。
+
+## 実機で確認する3点
+
+1. **頭部姿勢の符号** — うなずいて pitch が正に振れるか(逆なら `SIGNS.PITCH_SIGN = -1`)。「下を向いていた割合」の向きに効く
+2. **blendshape の名前** — 初回の検出時に全52件がコンソールに出る。未知名の警告がないか(`src/engine/blendshapeNames.ts`)
+3. **解析レート** — 確認画面の要約に「毎秒◯回」と出る。15回前後が目安
+
+---
+
+## 行動シグナル解析デモ(`/demo`)
+
+面接の受け答えから「主張性」「感情表出性」の2軸をリアルタイムに可視化し、4象限と根拠となった行動指標を示す
+商談用デモです。設計書は [docs/design-v0.1.md](docs/design-v0.1.md)。ログイン・サーバーなしで動きます
+(`npm run build` 後の `dist/` を静的配信しても `/demo` は動作します)。
+
+- 映像・表情・音響の解析は端末内。モデル・WASM・フォントはローカル同梱
+- 合否判定・感情分類・属性推定はしない
+- 文字起こしに Chrome の Web Speech API を使う場合、**音声が Google のサーバーに送信される**(環境チェック画面で明示・オフ可)
+- 接し方ガイドは既定でテンプレート生成。ビルド時に `VITE_ANTHROPIC_API_KEY` を設定した場合のみ Claude API を試す
+  (ブラウザにキーが埋まるため、デモ端末以外に配布するビルドでは設定しないこと。運用版の画面の CSP では外部通信を許可していない)
+
+### デモのチューニング
+
+`src/config/scoring.ts` の `NORMS`・`WEIGHTS`・`SIGNAL`・`SIGNS`・`GATE`・`CONFIDENCE`・`LIVE`。帯域を変えたら `NORMS_VERSION` を上げる。
+デモ1回ごとに「結果をJSONで保存」でキャリブレーション用データが1件たまる(`groundTruth` に他者評価を追記する)。
+サンプル再生用の `public/sample-session.json` は `npm run generate:sample` で再生成できる。
+
+### モデル・WASM の同梱
+
+- `public/models/face_landmarker.task`(3.7MB)はコミット済み
+- `public/wasm/` は `npm run vendor`(dev/build 前に自動実行)で `node_modules/@mediapipe/tasks-vision/wasm` からコピーされる

@@ -1,23 +1,24 @@
+// 行動シグナル解析デモ(/demo)。商談用のデモをそのまま残している。
 // 画面遷移(§2): 起動 → 環境チェック → 設問 → 結果。
 // カメラ拒否・モデル読み込み失敗はサンプル再生モードに逃がす(§9 落ちない設計)。
 
 import { useEffect, useRef, useState } from "react";
-import { FLAGS } from "./config/flags";
-import { NORMS_VERSION } from "./config/scoring";
-import type { AudioEngine } from "./engine/audioEngine";
-import { FaceEngine } from "./engine/faceEngine";
-import { loadSampleSession } from "./engine/replay";
-import type { GateInfo, ReplayFile } from "./engine/sessionStore";
-import { SpeechEngine } from "./engine/speechEngine";
-import { BootScreen } from "./ui/BootScreen";
-import { EnvGate } from "./ui/EnvGate";
-import { LiveRunner, SampleRunner } from "./ui/QuestionRunner";
-import { ResultPanel } from "./ui/ResultPanel";
-import type { ResultData } from "./ui/types";
+import { FLAGS } from "../config/flags";
+import { NORMS_VERSION } from "../config/scoring";
+import type { AudioEngine } from "../engine/audioEngine";
+import { FaceEngine } from "../engine/faceEngine";
+import { loadSampleSession } from "../engine/replay";
+import type { GateInfo, ReplayFile } from "../engine/sessionStore";
+import { SpeechEngine } from "../engine/speechEngine";
+import { BootScreen } from "../ui/BootScreen";
+import { EnvGate } from "../ui/EnvGate";
+import { LiveRunner, SampleRunner } from "../ui/QuestionRunner";
+import { ResultPanel } from "../ui/ResultPanel";
+import type { ResultData } from "../ui/types";
 
 type Phase = "boot" | "gate" | "run" | "sample" | "result";
 
-export default function App() {
+export default function DemoApp() {
   const [phase, setPhase] = useState<Phase>("boot");
   const [boot, setBoot] = useState({ stage: "起動中", fraction: 0 });
   const [modelError, setModelError] = useState<string | null>(null);
@@ -59,6 +60,24 @@ export default function App() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    const prev = document.title;
+    document.title = "行動シグナル解析 — デモ";
+    return () => {
+      document.title = prev;
+    };
+  }, []);
+
+  // ルーター配下に入ったので、画面を離れるときにカメラ・マイク・モデルを解放する
+  useEffect(
+    () => () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      audioRef.current?.close();
+      faceRef.current?.close();
+    },
+    [],
+  );
 
   const startSample = () => {
     if (sampleFile) {
