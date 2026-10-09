@@ -99,7 +99,7 @@ export function DecisionPanel({
               <div className="muted small">
                 評価の提出 {submittedAssigned}/{expected || "—"} 人
               </div>
-              {detail.evaluations.othersVisible ? <Tally evaluations={evals} criteria={detail.criteria} /> : null}
+              {detail.evaluations.othersVisible ? <Tally evaluations={evals} criteria={detail.criteria} passLine={detail.interview.passLine} /> : null}
               {summary && (
                 <div className="decision-expr">
                   <div className="sub-head">表情の計測(参考)</div>

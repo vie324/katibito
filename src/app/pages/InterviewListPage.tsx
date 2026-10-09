@@ -1,6 +1,7 @@
 // 面接一覧。自分の対応待ち(評価・判定)を上に出す。
 
 import { useEffect, useMemo, useState } from "react";
+import { formatScore } from "../../shared/score";
 import { STATUS_LABEL } from "../../shared/status";
 import type { InterviewListItem, InterviewStatus } from "../../shared/types";
 import { api, errorMessage } from "../api";
@@ -143,7 +144,13 @@ export function InterviewListPage() {
                         <Link to={`/interviews/${it.id}`} onClick={(e) => e.stopPropagation()}>
                           {it.candidate.displayName}
                         </Link>
-                        {it.candidate.kana && <div className="muted small">{it.candidate.kana}</div>}
+                        {(it.candidate.kana || it.round) && (
+                          <div className="muted small">
+                            {it.candidate.kana}
+                            {it.candidate.kana && it.round ? " ・ " : ""}
+                            {it.round}
+                          </div>
+                        )}
                       </td>
                       <td className="small">
                         {it.interviewerIds.map((id) => names.get(id) ?? "—").join("・") || <span className="muted">未設定</span>}
@@ -173,10 +180,17 @@ export function InterviewListPage() {
                             {it.votes.fail > 0 && <span className="vote vote-fail">不合格 {it.votes.fail}</span>}
                           </div>
                         )}
+                        {it.score !== null && <div className="muted num">合計点 {formatScore(it.score)}</div>}
                         {it.myEvaluation === "draft" && <div className="muted">あなた: 下書き</div>}
                       </td>
                       <td className="nowrap">
-                        {it.decision ? <VoteChip vote={it.decision.result} /> : <StatusChip status={it.status} />}
+                        {it.live ? (
+                          <span className="chip chip-live">● ライブ</span>
+                        ) : it.decision ? (
+                          <VoteChip vote={it.decision.result} />
+                        ) : (
+                          <StatusChip status={it.status} />
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -16,6 +16,7 @@ import {
   decodeTrackGz,
   deleteRecordingFiles,
   finalizeRecording,
+  liveInfo,
   loadSummary,
   publicRecording,
   receivedChunks,
@@ -26,6 +27,7 @@ import {
 } from "../recordings";
 import { newId } from "../store";
 import { audit, auditView, getInterview } from "./interviews";
+import { notifyLiveStarted } from "../notifications";
 
 const MAX_RECORDINGS = 20;
 const MAX_CHUNKS = 100_000;
@@ -141,9 +143,50 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
   r.get("/api/interviews/:id/recordings/:rid", "user", async (c) => {
     const rec = getRecording(app, c.params.id, c.params.rid);
     return {
-      recording: publicRecording(rec),
+      recording: publicRecording(rec, liveInfo(app, c.params.id, rec)),
       received: rec.status === "uploading" ? await receivedChunks(app, c.params.id, rec.id) : [],
     };
+  });
+
+  // ---------------------------------------------------------------- ライブ(録画中)
+  // 録画している端末が数秒ごとに経過時間を知らせる。サーバーはこれで「録画開始の時刻」を推定し、
+  // ライブで見ている人のメモの時刻(録画の何分何秒か)を決める
+  r.post("/api/interviews/:id/recordings/:rid/live", "user", async (c) => {
+    const body = obj(await readJson(c, 16 * 1024));
+    const elapsedMs = int(body.elapsedMs, "録画の経過時間", { min: 0, max: MAX_DURATION_MS })!;
+    const question = str(body.question, "いまの質問", { max: 100, optional: true }) || null;
+    const iv = getInterview(app, c.params.id);
+    const rec = getRecording(app, iv.id, c.params.rid);
+    requireRecordingClient(c, rec);
+    if (rec.status !== "uploading") throw new HttpError(409, "この録画は終わっています");
+    const key = `${iv.id}/${rec.id}`;
+    const now = Date.now();
+    const anchor = now - elapsedMs;
+    const prev = app.live.get(key);
+    // 通信の遅れのぶん開始時刻は後ろにずれるので、いちばん早い推定を使う(大きくずれたら取り直す)
+    const anchorMs = prev && Math.abs(prev.anchorMs - anchor) < 5000 ? Math.min(prev.anchorMs, anchor) : anchor;
+    app.live.set(key, { anchorMs, updatedAt: now, question, notified: prev?.notified ?? false });
+    if (!prev?.notified) {
+      app.live.get(key)!.notified = true;
+      void notifyLiveStarted(app, iv);
+    }
+    return { live: liveInfo(app, iv.id, rec, now) };
+  });
+
+  // ライブで見る人が、受信済みのチャンクを取りに来る(録画中だけ)
+  r.get("/api/interviews/:id/recordings/:rid/chunks/:index", "user", async (c) => {
+    const index = int(c.params.index, "チャンク番号", { min: 0, max: MAX_CHUNKS - 1 })!;
+    const rec = getRecording(app, c.params.id, c.params.rid);
+    if (rec.status !== "uploading") throw new HttpError(404, "録画中ではありません");
+    const file = chunkFile(app, c.params.id, rec.id, index);
+    try {
+      await stat(file);
+    } catch {
+      throw new HttpError(404, "まだ届いていません");
+    }
+    if (index === 0) await auditView(app, c, "live_view", c.params.id, rec.id);
+    await sendFileRange(c.req, c.res, file, "application/octet-stream", "private, max-age=300");
+    return HANDLED;
   });
 
   // ---------------------------------------------------------------- チャンク
@@ -200,6 +243,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
         throw new HttpError(409, `未送信のデータがあります(${missing.length}件以上)。送信を再開してください`);
       }
       rec.status = "processing";
+      app.live.delete(`${iv.id}/${rec.id}`);
       rec.chunkCount = chunkCount;
       rec.durationMs = durationMs;
       rec.endedAt = endedAt;
@@ -333,6 +377,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
         throw new HttpError(403, "録画した本人か管理者だけが取り消せます");
       }
       await deleteRecordingFiles(app, iv.id, rec, false);
+      app.live.delete(`${iv.id}/${rec.id}`);
       rec.status = "deleted";
       rec.analysis = "none";
       rec.purgedAt = new Date().toISOString();
@@ -349,6 +394,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       const rec = getRecording(app, iv.id, c.params.rid);
       if (app.jobs.has(`finalize:${iv.id}:${rec.id}`)) throw new HttpError(409, "処理中です。しばらく待ってから削除してください");
       await deleteRecordingFiles(app, iv.id, rec, false);
+      app.live.delete(`${iv.id}/${rec.id}`);
       rec.status = "deleted";
       rec.fileName = null;
       rec.analysis = "none";

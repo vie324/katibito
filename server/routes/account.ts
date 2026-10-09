@@ -2,12 +2,13 @@
 
 import { APP_VERSION } from "../../src/config/flags";
 import { RECORDING_PRESETS } from "../../src/shared/defaults";
-import type { Criterion, SessionInfo, Settings } from "../../src/shared/types";
+import type { Criterion, InterviewTemplate, QuestionPlan, SessionInfo, Settings } from "../../src/shared/types";
 import {
   arr,
   bool,
   int,
   LOGIN_ID_RE,
+  num,
   obj,
   oneOf,
   password,
@@ -235,18 +236,57 @@ function activeAdmins(app: AppContext, excludeId: string): number {
   return n;
 }
 
-export function parseSettings(body: Record<string, unknown>, current: Settings): Settings {
-  const criteria = arr(body.criteria, "評価項目", 15, (x, i): Criterion => {
-    const o = obj(x, `評価項目${i + 1}`);
-    const id = typeof o.id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(o.id) ? o.id : `c${Date.now().toString(36)}${i}`;
+const SHORT_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+function parseCriteria(v: unknown, owner: string): Criterion[] {
+  const criteria = arr(v, `${owner}の評価項目`, 15, (x, i): Criterion => {
+    const o = obj(x, `${owner}の評価項目${i + 1}`);
     return {
-      id,
-      label: str(o.label, `評価項目${i + 1}の名前`, { max: 30, min: 1 }),
-      description: str(o.description, `評価項目${i + 1}の説明`, { max: 200, optional: true }),
+      id: typeof o.id === "string" && SHORT_ID_RE.test(o.id) ? o.id : `c${Date.now().toString(36)}${i}`,
+      label: str(o.label, `${owner}の評価項目${i + 1}の名前`, { max: 30, min: 1 }),
+      description: str(o.description, `${owner}の評価項目${i + 1}の説明`, { max: 200, optional: true }),
+      weight: int(o.weight, `${owner}の評価項目${i + 1}の重み`, { min: 1, max: 5, optional: true }) ?? 1,
     };
   });
-  if (criteria.length === 0) throw new ValidationError("評価項目を1つ以上設定してください");
-  if (new Set(criteria.map((x) => x.id)).size !== criteria.length) throw new ValidationError("評価項目のIDが重複しています");
+  if (criteria.length === 0) throw new ValidationError(`${owner}の評価項目を1つ以上設定してください`);
+  if (new Set(criteria.map((x) => x.id)).size !== criteria.length) throw new ValidationError(`${owner}の評価項目のIDが重複しています`);
+  return criteria;
+}
+
+export function parseQuestionPlans(v: unknown, owner: string): QuestionPlan[] {
+  return arr(v, `${owner}の質問`, 30, (x, i): QuestionPlan => {
+    const o = obj(x, `${owner}の質問${i + 1}`);
+    return {
+      text: str(o.text, `${owner}の質問${i + 1}`, { max: 100, min: 1 }),
+      minutes: int(o.minutes, `${owner}の質問${i + 1}の時間(分)`, { min: 1, max: 120, optional: true }),
+    };
+  });
+}
+
+function parseTemplates(v: unknown): InterviewTemplate[] {
+  const templates = arr(v, "評価シート", 20, (x, i): InterviewTemplate => {
+    const o = obj(x, `評価シート${i + 1}`);
+    const name = str(o.name, `評価シート${i + 1}の名前`, { max: 40, min: 1 });
+    const owner = `「${name}」`;
+    return {
+      id: typeof o.id === "string" && SHORT_ID_RE.test(o.id) ? o.id : `t${Date.now().toString(36)}${i}`,
+      name,
+      criteria: parseCriteria(o.criteria, owner),
+      questions: parseQuestionPlans(o.questions, owner),
+      passLine: o.passLine === null || o.passLine === undefined || o.passLine === "" ? null : num(o.passLine, `${owner}の合格の目安`, { min: 1, max: 5 }),
+    };
+  });
+  if (templates.length === 0) throw new ValidationError("評価シートを1つ以上設定してください");
+  if (new Set(templates.map((t) => t.id)).size !== templates.length) throw new ValidationError("評価シートのIDが重複しています");
+  if (new Set(templates.map((t) => t.name)).size !== templates.length) throw new ValidationError("評価シートの名前が重複しています");
+  return templates;
+}
+
+export function parseSettings(body: Record<string, unknown>, current: Settings): Settings {
+  const templates = parseTemplates(body.templates);
+  const defaultTemplateId = typeof body.defaultTemplateId === "string" && templates.some((t) => t.id === body.defaultTemplateId)
+    ? body.defaultTemplateId
+    : templates[0].id;
 
   const ratingLabels = arr(body.ratingLabels, "評価の段階", 5, (x, i) => str(x, `評価の段階${i + 1}`, { max: 12, min: 1 }));
   if (ratingLabels.length !== 5) throw new ValidationError("評価の段階は5つ設定してください");
@@ -264,9 +304,9 @@ export function parseSettings(body: Record<string, unknown>, current: Settings):
     ...current,
     orgName: str(body.orgName, "団体名", { max: 80, optional: true }),
     contact: str(body.contact, "連絡先", { max: 200, optional: true, multiline: true }),
-    criteria,
+    templates,
+    defaultTemplateId,
     ratingLabels,
-    defaultQuestions: arr(body.defaultQuestions, "質問リスト", 30, (x, i) => str(x, `質問${i + 1}`, { max: 100, min: 1 })),
     consent: {
       title: str(consent.title, "同意文のタイトル", { max: 100, min: 1 }),
       body: str(consent.body, "同意文", { max: 10_000, min: 20, multiline: true }),
@@ -282,5 +322,17 @@ export function parseSettings(body: Record<string, unknown>, current: Settings):
       height: preset?.height ?? int(recording.height, "録画の高さ", { min: 240, max: 1080 })!,
     },
     webhookUrl: webhookRaw || null,
+    access: {
+      interviewerScope:
+        body.access === undefined ? current.access.interviewerScope : oneOf(obj(body.access, "閲覧範囲").interviewerScope, "面接官の閲覧範囲", ["all", "assigned"] as const),
+    },
+    security: (() => {
+      if (body.security === undefined) return current.security;
+      const sec = obj(body.security, "セキュリティ");
+      return {
+        watermark: bool(sec.watermark, "透かしの設定", current.security.watermark),
+        requireTotpForAdmins: bool(sec.requireTotpForAdmins, "管理者の2段階認証", current.security.requireTotpForAdmins),
+      };
+    })(),
   };
 }

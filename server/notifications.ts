@@ -44,3 +44,10 @@ export async function notifyDecision(ctx: AppContext, iv: Interview, d: Decision
     `【面接記録】${iv.candidate.displayName} さんの判定が「${VOTE_LABEL[d.result]}」に確定しました(${d.decidedByName})。\n${link(ctx, iv)}`,
   );
 }
+
+export async function notifyLiveStarted(ctx: AppContext, iv: Interview): Promise<void> {
+  await sendWebhook(
+    ctx.store.settings.webhookUrl,
+    `【面接記録】${iv.candidate.displayName} さんの面接の録画が始まりました。ライブ(数秒遅れ)で見られます。\n${link(ctx, iv)}`,
+  );
+}

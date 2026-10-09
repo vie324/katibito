@@ -13,8 +13,8 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { defaultSettings } from "../src/shared/defaults";
-import type { Evaluation, Interview, Note, Settings, UserPublic } from "../src/shared/types";
+import { DEFAULT_TEMPLATE_ID, defaultSettings, defaultTemplate } from "../src/shared/defaults";
+import type { Criterion, Evaluation, Interview, InterviewTemplate, Note, Settings, UserPublic } from "../src/shared/types";
 import { ID_RE } from "../src/shared/validate";
 
 export type UserRecord = UserPublic & { passwordHash: string; passwordChangedAt: string };
@@ -102,7 +102,7 @@ export class Store {
       const dir = path.join(this.interviewsDir, entry.name);
       const iv = await readJsonFile<Interview>(path.join(dir, "interview.json"));
       if (!iv) continue;
-      this.interviews.set(iv.id, normalizeInterview(iv));
+      this.interviews.set(iv.id, normalizeInterview(iv, this.settings));
       const evMap = new Map<string, Evaluation>();
       try {
         for (const f of await readdir(path.join(dir, "evaluations"))) {
@@ -241,27 +241,80 @@ export class Store {
   }
 }
 
-/** 保存済みの設定に、後から増えた項目の初期値を補う */
-export function mergeSettings(saved: Partial<Settings>): Settings {
+/** v0.2 までの設定(評価項目と質問が1組だけ) */
+type LegacyCriterion = Omit<Criterion, "weight"> & { weight?: number };
+type LegacySettings = Partial<Settings> & {
+  criteria?: LegacyCriterion[];
+  defaultQuestions?: string[];
+};
+
+function normalizeCriteria(list: LegacyCriterion[]): Criterion[] {
+  return list.map((c) => ({ ...c, description: c.description ?? "", weight: typeof c.weight === "number" && c.weight > 0 ? c.weight : 1 }));
+}
+
+/** 保存済みの設定に、後から増えた項目の初期値を補う(古い形式の評価項目・質問は「標準」の評価シートにする) */
+export function mergeSettings(saved: LegacySettings): Settings {
   const d = defaultSettings();
+  let templates: InterviewTemplate[];
+  if (Array.isArray(saved.templates) && saved.templates.length > 0) {
+    templates = saved.templates.map((t) => ({
+      ...t,
+      criteria: normalizeCriteria(t.criteria ?? []),
+      questions: (t.questions ?? []).map((q) => ({ text: q.text, minutes: q.minutes ?? null })),
+      passLine: t.passLine ?? null,
+    }));
+  } else {
+    const base = defaultTemplate();
+    templates = [
+      {
+        ...base,
+        criteria: saved.criteria ? normalizeCriteria(saved.criteria) : base.criteria,
+        questions: saved.defaultQuestions ? saved.defaultQuestions.map((text) => ({ text, minutes: null })) : base.questions,
+      },
+    ];
+  }
+  const { criteria: _c, defaultQuestions: _q, ...rest } = saved;
+  void _c;
+  void _q;
   return {
     ...d,
-    ...saved,
+    ...rest,
+    templates,
+    defaultTemplateId: templates.some((t) => t.id === saved.defaultTemplateId) ? saved.defaultTemplateId! : templates[0].id,
     consent: { ...d.consent, ...(saved.consent ?? {}) },
     retention: { ...d.retention, ...(saved.retention ?? {}) },
     recording: { ...d.recording, ...(saved.recording ?? {}) },
-    criteria: saved.criteria ?? d.criteria,
+    access: { ...d.access, ...(saved.access ?? {}) },
+    security: { ...d.security, ...(saved.security ?? {}) },
     ratingLabels: saved.ratingLabels ?? d.ratingLabels,
-    defaultQuestions: saved.defaultQuestions ?? d.defaultQuestions,
   };
 }
 
-function normalizeInterview(iv: Interview): Interview {
+/** 評価シートを選ぶ(見つからなければ既定のもの) */
+export function templateOf(settings: Settings, id: string | null | undefined): InterviewTemplate {
+  return (
+    settings.templates.find((t) => t.id === id) ??
+    settings.templates.find((t) => t.id === settings.defaultTemplateId) ??
+    settings.templates[0]
+  );
+}
+
+function normalizeInterview(iv: Interview, settings: Settings): Interview {
+  const questions = iv.questions ?? [];
+  // v0.2 までの面接は評価項目の写しを持たない。保存時点の設定(既定の評価シート)を写す
+  const legacyTemplate = iv.criteria ? null : templateOf(settings, DEFAULT_TEMPLATE_ID);
   return {
     ...iv,
+    applicantId: iv.applicantId ?? iv.id,
+    round: iv.round ?? "",
     location: iv.location ?? "",
     interviewerIds: iv.interviewerIds ?? [],
-    questions: iv.questions ?? [],
+    questions,
+    questionMinutes: questions.map((_, i) => iv.questionMinutes?.[i] ?? null),
+    templateId: iv.templateId ?? legacyTemplate?.id ?? null,
+    templateName: iv.templateName ?? legacyTemplate?.name ?? "",
+    criteria: iv.criteria ? normalizeCriteria(iv.criteria) : legacyTemplate!.criteria.map((c) => ({ ...c })),
+    passLine: iv.passLine ?? null,
     recordingDeclined: iv.recordingDeclined ?? false,
     recordings: (iv.recordings ?? []).map((r) => ({
       ...r,

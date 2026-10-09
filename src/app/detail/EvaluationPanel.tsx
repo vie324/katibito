@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { VOTE_LABEL } from "../../shared/status";
+import { averageScore, formatScore, weightedScore } from "../../shared/score";
 import type { Criterion, Evaluation, InterviewDetail, Vote } from "../../shared/types";
 import { api } from "../api";
 import { formatDateTime } from "../format";
@@ -43,7 +44,11 @@ export function EvaluationPanel({ detail, setDetail }: { detail: InterviewDetail
               <div className="muted small">まだ提出された評価はありません。</div>
             ) : (
               <>
-                <Tally evaluations={[...(ev.mine?.status === "submitted" ? [ev.mine] : []), ...ev.others]} criteria={detail.criteria} />
+                <Tally
+                  evaluations={[...(ev.mine?.status === "submitted" ? [ev.mine] : []), ...ev.others]}
+                  criteria={detail.criteria}
+                  passLine={detail.interview.passLine}
+                />
                 <div className="other-evals">
                   {ev.others.map((o) => (
                     <EvaluationCard key={o.userId} e={o} criteria={detail.criteria} labels={detail.ratingLabels} />
@@ -94,6 +99,7 @@ function MyEvaluation({ detail, setDetail }: { detail: InterviewDetail; setDetai
 
   const missing = criteria.filter((c) => !ratings[c.id]).map((c) => c.label);
   const canSubmit = missing.length === 0 && vote !== null;
+  const score = weightedScore(criteria, ratings);
 
   const save = async (submit: boolean) => {
     if (submit) {
@@ -215,6 +221,12 @@ function MyEvaluation({ detail, setDetail }: { detail: InterviewDetail; setDetai
         ))}
       </div>
 
+      <div className="score-line">
+        <span className="muted small">合計点(重み付き平均)</span>
+        <span className="num score-value">{formatScore(score)}</span>
+        {missing.length > 0 && score !== null && <span className="muted small">(入力済みの項目だけで計算)</span>}
+      </div>
+
       <div className="vote-select">
         <span className="criterion-label">総合評価</span>
         <div className="vote-buttons" role="radiogroup" aria-label="総合評価">
@@ -297,12 +309,14 @@ export function EvaluationCard({
         <div className="eval-card-head">
           <span className="eval-name">{e.userName}</span>
           {e.vote && <VoteChip vote={e.vote} />}
+          <span className="num eval-score" title="合計点(重み付き平均)">{formatScore(weightedScore(criteria, e.ratings))}点</span>
           <span className="muted small">{formatDateTime(e.submittedAt ?? e.updatedAt)}</span>
         </div>
       )}
       {hideName && e.vote && (
         <div className="eval-card-head">
           <VoteChip vote={e.vote} />
+          <span className="num eval-score" title="合計点(重み付き平均)">{formatScore(weightedScore(criteria, e.ratings))}点</span>
         </div>
       )}
       {(e.revisions ?? 0) > 0 && (
@@ -343,11 +357,21 @@ export function EvaluationCard({
   );
 }
 
-export function Tally({ evaluations, criteria }: { evaluations: Evaluation[]; criteria: Criterion[] }) {
+export function Tally({
+  evaluations,
+  criteria,
+  passLine,
+}: {
+  evaluations: Evaluation[];
+  criteria: Criterion[];
+  passLine?: number | null;
+}) {
   const submitted = evaluations.filter((e) => e.status === "submitted");
   const votes: Record<Vote, number> = { pass: 0, hold: 0, fail: 0 };
   for (const e of submitted) if (e.vote) votes[e.vote]++;
   if (submitted.length === 0) return null;
+  const score = averageScore(criteria, submitted);
+  const weighted = criteria.some((c) => c.weight !== 1);
   return (
     <div className="tally">
       <div className="tally-votes">
@@ -357,6 +381,15 @@ export function Tally({ evaluations, criteria }: { evaluations: Evaluation[]; cr
             <span className="num big">{votes[v]}</span>
           </div>
         ))}
+        <div className="tally-vote tally-score">
+          <span>合計点の平均{weighted ? "(重み付き)" : ""}</span>
+          <span className="num big">{formatScore(score)}</span>
+          {typeof passLine === "number" && score !== null && (
+            <span className={`small ${score >= passLine ? "ok-text" : "warn-text"}`}>
+              合格の目安 {passLine.toFixed(1)} {score >= passLine ? "以上" : "未満"}
+            </span>
+          )}
+        </div>
       </div>
       <table className="tally-table">
         <thead>
@@ -373,7 +406,10 @@ export function Tally({ evaluations, criteria }: { evaluations: Evaluation[]; cr
             const spread = xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
             return (
               <tr key={c.id}>
-                <td>{c.label}</td>
+                <td>
+                  {c.label}
+                  {weighted && <span className="muted small"> ×{c.weight}</span>}
+                </td>
                 <td className="num">
                   {avg === null ? "—" : avg.toFixed(1)}
                   {avg !== null && (

@@ -41,4 +41,18 @@ export type AppContext = {
   setup: { code: string | null };
   /** 最後に見えた外部URL(通知用。APP_URL があればそちら) */
   lastOrigin: string | null;
+  /** 録画中の録画(キーは "<面接ID>/<録画ID>")。録画している端末の心拍で更新する。保存はしない */
+  live: Map<string, LiveState>;
 };
+
+export type LiveState = {
+  /** 録画開始(t = 0)のサーバー時刻(ms) */
+  anchorMs: number;
+  updatedAt: number;
+  question: string | null;
+  /** 「面接が始まりました」を通知済み */
+  notified: boolean;
+};
+
+/** 心拍がこれより古ければ録画は止まっている(ライブではない)とみなす */
+export const LIVE_STALE_MS = 20_000;

@@ -28,17 +28,36 @@ export type Criterion = {
   id: string;
   label: string;
   description: string;
+  /** 合計点での重み(1〜5) */
+  weight: number;
+};
+
+/** 質問と、その質問にかける時間の目安(分) */
+export type QuestionPlan = {
+  text: string;
+  minutes: number | null;
+};
+
+/** 評価シート(面接の種類ごとの評価項目・質問) */
+export type InterviewTemplate = {
+  id: string;
+  name: string;
+  criteria: Criterion[];
+  questions: QuestionPlan[];
+  /** 合格の目安(重み付き平均点、1〜5)。null なら表示しない */
+  passLine: number | null;
 };
 
 export type Settings = {
   orgName: string;
   /** 同意文の {連絡先} に入る文言 */
   contact: string;
-  criteria: Criterion[];
+  /** 評価シート(1つ以上) */
+  templates: InterviewTemplate[];
+  /** 新しい面接で最初に選ばれている評価シート */
+  defaultTemplateId: string;
   /** 評価スケールのラベル(1〜5の順) */
   ratingLabels: string[];
-  /** 新規面接に入る質問リストの初期値(録画中のマーカーに使う) */
-  defaultQuestions: string[];
   consent: {
     title: string;
     /** {団体名} {保存日数} {連絡先} を差し込める */
@@ -59,6 +78,16 @@ export type Settings = {
   };
   /** Slack / Google Chat 互換の Incoming Webhook。null で無効 */
   webhookUrl: string | null;
+  access: {
+    /** 面接官が見られる面接: all = すべて / assigned = 面接官に選ばれた面接と自分が登録した面接だけ(管理者はすべて) */
+    interviewerScope: "all" | "assigned";
+  };
+  security: {
+    /** 再生中の映像に見ている人の名前を薄く重ねる */
+    watermark: boolean;
+    /** 管理者に2段階認証を必須にする */
+    requireTotpForAdmins: boolean;
+  };
   updatedAt: string;
   updatedBy: string | null;
 };
@@ -146,6 +175,19 @@ export type RecordingMeta = {
   createdAt: string;
   error: string | null;
   purgedAt: string | null;
+  /** 録画中(ライブで見られる)なら、その状態。応答だけに付く */
+  live?: LiveInfo | null;
+};
+
+/** 録画中の録画の状態(録画している端末から数秒ごとに届く) */
+export type LiveInfo = {
+  /** 録画を始めた時刻(サーバーの時計) */
+  startedAt: string;
+  /** いまの録画の経過時間(サーバーの推定) */
+  elapsedMs: number;
+  /** いまの質問 */
+  question: string | null;
+  updatedAt: string;
 };
 
 export type Vote = "pass" | "hold" | "fail";
@@ -161,10 +203,21 @@ export type Decision = {
 export type Interview = {
   id: string;
   candidate: Candidate;
+  /** 同じ候補者の面接(一次・二次など)に共通のID */
+  applicantId: string;
+  /** 面接の段階(「一次面接」など。空でもよい) */
+  round: string;
   scheduledAt: string | null;
   location: string;
   interviewerIds: string[];
   questions: string[];
+  /** questions と同じ順の、質問ごとの時間の目安(分) */
+  questionMinutes: (number | null)[];
+  /** 使った評価シート。評価項目は面接ごとに写しを持つ(あとで評価シートを変えても過去の評価が崩れない) */
+  templateId: string | null;
+  templateName: string;
+  criteria: Criterion[];
+  passLine: number | null;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
@@ -185,6 +238,8 @@ export type InterviewStatus =
 export type InterviewListItem = {
   id: string;
   candidate: Candidate;
+  applicantId: string;
+  round: string;
   scheduledAt: string | null;
   location: string;
   interviewerIds: string[];
@@ -197,8 +252,13 @@ export type InterviewListItem = {
   durationMs: number | null;
   submittedCount: number;
   expectedCount: number;
+  /** 録画中(ライブで見られる) */
+  live: boolean;
   myEvaluation: "none" | "draft" | "submitted";
   votes: Record<Vote, number> | null;
+  /** 提出済みの評価の重み付き平均点(1〜5)。非公開中は null */
+  score: number | null;
+  templateName: string;
   decision: Decision | null;
 };
 
@@ -227,6 +287,8 @@ export type Evaluation = {
 
 export type Note = {
   id: string;
+  /** note = メモ / room = 面接室へのメッセージ(録画している端末に表示。評価の非公開の対象外) */
+  kind?: "note" | "room";
   /** 録画に紐づくメモは recordingId と tMs を持つ。全体コメントは null */
   recordingId: string | null;
   tMs: number | null;
@@ -254,12 +316,25 @@ export type NotesView = {
   hiddenCount: number;
 };
 
+/** 同じ候補者のほかの面接(一次・二次など) */
+export type RoundSummary = {
+  id: string;
+  round: string;
+  scheduledAt: string | null;
+  createdAt: string;
+  status: InterviewStatus;
+  decision: Vote | null;
+};
+
 export type InterviewDetail = {
   interview: Interview;
   status: InterviewStatus;
+  /** 同じ候補者のほかの面接(閲覧できるものだけ) */
+  otherRounds: RoundSummary[];
   interviewers: UserPublic[];
   evaluations: EvaluationsView;
   notes: NotesView;
+  /** この面接の評価項目(面接ごとの写し) */
   criteria: Criterion[];
   ratingLabels: string[];
 };

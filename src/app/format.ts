@@ -24,6 +24,14 @@ export function formatDate(iso: string | null | undefined): string {
   return d.toLocaleDateString("ja-JP", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" });
 }
 
+/** 時刻だけ(14:32) */
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("ja-JP", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
+}
+
 /** 経過時間 m:ss / h:mm:ss */
 export function formatClock(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";

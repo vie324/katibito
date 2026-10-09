@@ -11,19 +11,34 @@ import type {
   Interview,
   InterviewDetail,
   InterviewListItem,
+  InterviewTemplate,
   Note,
   NotesView,
+  QuestionPlan,
+  RoundSummary,
   UserPublic,
   Vote,
 } from "../../src/shared/types";
+import { averageScore } from "../../src/shared/score";
 import { arr, bool, id, int, isoDate, obj, oneOf, str, ValidationError } from "../../src/shared/validate";
 import type { AppContext } from "../context";
 import { HttpError, readJson, type Ctx, type Router } from "../http";
 import { notifyDecision, notifyEvaluationSubmitted } from "../notifications";
-import { deleteAnalysisFiles, deleteRecordingFiles, forgetSummary, publicRecording } from "../recordings";
-import { newId, type UserRecord } from "../store";
+import { deleteAnalysisFiles, deleteRecordingFiles, forgetSummary, liveInfo, publicRecording } from "../recordings";
+import { newId, templateOf, type UserRecord } from "../store";
+import { parseQuestionPlans } from "./account";
 
 const VOTES = ["pass", "hold", "fail"] as const;
+
+/**
+ * この面接を見られるか。管理者はすべて。面接官は、設定で「担当の面接だけ」にしていれば
+ * 面接官に選ばれた面接と自分が登録した面接だけ
+ */
+export function canView(app: AppContext, user: UserRecord, iv: Interview): boolean {
+  if (user.role === "admin") return true;
+  if (app.store.settings.access.interviewerScope === "all") return true;
+  return iv.interviewerIds.includes(user.id) || iv.createdBy === user.id;
+}
 
 export function getInterview(app: AppContext, iid: string): Interview {
   const iv = app.store.interviews.get(iid);
@@ -99,11 +114,26 @@ function notesView(app: AppContext, iv: Interview, user: UserRecord): NotesView 
   const all = app.store.notesOf(iv.id);
   const mine = app.store.evaluationOf(iv.id, user.id);
   const vis = evaluationVisibility(app, iv, user, mine);
-  const visible = vis.visible ? all : all.filter((n) => n.userId === user.id);
+  // 面接室へのメッセージは進行の連絡なので、評価の非公開の対象にしない
+  const visible = vis.visible ? all : all.filter((n) => n.userId === user.id || n.kind === "room");
   return {
     notes: visible.map((n) => ({ ...n, userName: app.store.userName(n.userId) })),
     hiddenCount: all.length - visible.length,
   };
+}
+
+function otherRounds(app: AppContext, iv: Interview, user: UserRecord): RoundSummary[] {
+  return [...app.store.interviews.values()]
+    .filter((x) => x.applicantId === iv.applicantId && x.id !== iv.id && canView(app, user, x))
+    .map((x) => ({
+      id: x.id,
+      round: x.round,
+      scheduledAt: x.scheduledAt,
+      createdAt: x.createdAt,
+      status: deriveStatus(x, app.store.evaluationsOf(x.id)),
+      decision: x.decision?.result ?? null,
+    }))
+    .sort((a, b) => (a.scheduledAt ?? a.createdAt).localeCompare(b.scheduledAt ?? b.createdAt));
 }
 
 export function buildDetail(app: AppContext, iv: Interview, user: UserRecord): InterviewDetail {
@@ -113,12 +143,13 @@ export function buildDetail(app: AppContext, iv: Interview, user: UserRecord): I
     .filter((u): u is UserRecord => !!u)
     .map((u) => app.store.publicUser(u));
   return {
-    interview: { ...iv, recordings: iv.recordings.map(publicRecording) },
+    interview: { ...iv, recordings: iv.recordings.map((r) => publicRecording(r, liveInfo(app, iv.id, r))) },
     status: deriveStatus(iv, evals),
+    otherRounds: otherRounds(app, iv, user),
     interviewers,
     evaluations: evaluationsView(app, iv, user),
     notes: notesView(app, iv, user),
-    criteria: app.store.settings.criteria,
+    criteria: iv.criteria,
     ratingLabels: app.store.settings.ratingLabels,
   };
 }
@@ -132,6 +163,8 @@ export function listItem(app: AppContext, iv: Interview, user: UserRecord): Inte
   return {
     id: iv.id,
     candidate: iv.candidate,
+    applicantId: iv.applicantId,
+    round: iv.round,
     scheduledAt: iv.scheduledAt,
     location: iv.location,
     interviewerIds: iv.interviewerIds,
@@ -144,9 +177,12 @@ export function listItem(app: AppContext, iv: Interview, user: UserRecord): Inte
     durationMs: ready.reduce((s, r) => s + (r.durationMs ?? 0), 0) || null,
     submittedCount: submitted.filter((e) => iv.interviewerIds.includes(e.userId)).length,
     expectedCount: iv.interviewerIds.length,
+    live: iv.recordings.some((r) => liveInfo(app, iv.id, r) !== null),
     myEvaluation: mine ? mine.status : "none",
-    // 非公開中は票の内訳も見せない(管理者には一覧で見せる)
+    // 非公開中は票の内訳も点数も見せない(管理者には一覧で見せる)
     votes: vis.visible ? tallyVotes(evals) : null,
+    score: vis.visible ? averageScore(iv.criteria, evals) : null,
+    templateName: iv.templateName,
     decision: iv.decision,
   };
 }
@@ -181,8 +217,21 @@ function parseInterviewers(app: AppContext, v: unknown): string[] {
   return [...new Set(ids)];
 }
 
-function parseQuestions(v: unknown): string[] {
-  return arr(v, "質問", 30, (x, i) => str(x, `質問${i + 1}`, { max: 100, min: 1 }));
+/** 質問リスト。文字列の配列(v0.2 まで)か、{ text, minutes } の配列 */
+function parseQuestions(v: unknown): { questions: string[]; minutes: (number | null)[] } {
+  const plans = arr(v, "質問", 30, (x, i): QuestionPlan => {
+    if (typeof x === "string") return { text: str(x, `質問${i + 1}`, { max: 100, min: 1 }), minutes: null };
+    return parseQuestionPlans([x], `質問${i + 1}`)[0];
+  });
+  return { questions: plans.map((q) => q.text), minutes: plans.map((q) => q.minutes) };
+}
+
+/** 評価シートの内容を面接に写す */
+function applyTemplate(iv: Pick<Interview, "templateId" | "templateName" | "criteria" | "passLine">, t: InterviewTemplate): void {
+  iv.templateId = t.id;
+  iv.templateName = t.name;
+  iv.criteria = t.criteria.map((c) => ({ ...c }));
+  iv.passLine = t.passLine;
 }
 
 /** 録画の仕上げ(結合・索引付け)の最中は、ファイルを消す操作を受け付けない */
@@ -196,7 +245,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
   const { store } = app;
 
   r.get("/api/interviews", "user", (c) => {
-    const items = [...store.interviews.values()].map((iv) => listItem(app, iv, c.user!));
+    const items = [...store.interviews.values()].filter((iv) => canView(app, c.user!, iv)).map((iv) => listItem(app, iv, c.user!));
     items.sort((a, b) => (b.scheduledAt ?? b.createdAt).localeCompare(a.scheduledAt ?? a.createdAt));
     return { interviews: items };
   });
@@ -204,13 +253,35 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
   r.post("/api/interviews", "user", async (c) => {
     const body = obj(await readJson(c));
     const now = new Date().toISOString();
+    if (body.templateId !== undefined && body.templateId !== null && !store.settings.templates.some((t) => t.id === body.templateId)) {
+      throw new ValidationError("評価シートが見つかりません");
+    }
+    const template = templateOf(store.settings, typeof body.templateId === "string" ? body.templateId : null);
+    // 「次の面接を登録」: 前の面接と同じ候補者としてまとめる
+    let applicantId = newId();
+    if (body.fromInterviewId !== undefined && body.fromInterviewId !== null) {
+      const from = store.interviews.get(id(body.fromInterviewId, "前の面接"));
+      if (!from || !canView(app, c.user!, from)) throw new ValidationError("前の面接が見つかりません");
+      applicantId = from.applicantId;
+    }
+    const q =
+      body.questions === undefined
+        ? { questions: template.questions.map((x) => x.text), minutes: template.questions.map((x) => x.minutes) }
+        : parseQuestions(body.questions);
     const iv: Interview = {
       id: newId(),
       candidate: parseCandidate(body.candidate),
+      applicantId,
+      round: str(body.round, "面接の段階", { max: 20, optional: true }),
       scheduledAt: isoDate(body.scheduledAt, "面接日時"),
       location: str(body.location, "場所", { max: 100, optional: true }),
       interviewerIds: parseInterviewers(app, body.interviewerIds),
-      questions: body.questions === undefined ? [...store.settings.defaultQuestions] : parseQuestions(body.questions),
+      questions: q.questions,
+      questionMinutes: q.minutes,
+      templateId: null,
+      templateName: "",
+      criteria: [],
+      passLine: null,
       createdAt: now,
       createdBy: c.user!.id,
       updatedAt: now,
@@ -219,6 +290,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       recordings: [],
       decision: null,
     };
+    applyTemplate(iv, template);
     await store.saveInterview(iv);
     await audit(app, c, "interview_create", iv.id);
     return buildDetail(app, iv, c.user!);
@@ -240,8 +312,22 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       if (body.candidate !== undefined) patch.candidate = parseCandidate(body.candidate);
       if (body.scheduledAt !== undefined) patch.scheduledAt = isoDate(body.scheduledAt, "面接日時");
       if (body.location !== undefined) patch.location = str(body.location, "場所", { max: 100, optional: true });
+      if (body.round !== undefined) patch.round = str(body.round, "面接の段階", { max: 20, optional: true });
       if (body.interviewerIds !== undefined) patch.interviewerIds = parseInterviewers(app, body.interviewerIds);
-      if (body.questions !== undefined) patch.questions = parseQuestions(body.questions);
+      if (body.questions !== undefined) {
+        const q = parseQuestions(body.questions);
+        patch.questions = q.questions;
+        patch.questionMinutes = q.minutes;
+      }
+      if (body.templateId !== undefined && body.templateId !== iv.templateId) {
+        const t = store.settings.templates.find((x) => x.id === body.templateId);
+        if (!t) throw new ValidationError("評価シートが見つかりません");
+        // 評価が入力されたあとに評価項目を入れ替えると、入力済みの評価と項目が合わなくなる
+        if (store.evaluationsOf(iv.id).length > 0) {
+          throw new HttpError(409, "評価が入力済みのため、評価シートは変更できません");
+        }
+        applyTemplate(patch as Interview, t);
+      }
       Object.assign(iv, patch);
       await store.saveInterview(iv);
       await audit(app, c, "interview_update", iv.id);
@@ -346,7 +432,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
     const detail = await store.withLock(c.params.id, async () => {
       const iv = getInterview(app, c.params.id);
       if (iv.decision) throw new HttpError(409, "判定済みのため評価は変更できません");
-      const criteria = store.settings.criteria;
+      const criteria = iv.criteria;
       const ratingsIn = body.ratings === undefined ? {} : obj(body.ratings, "評価");
       const commentsIn = body.criterionComments === undefined ? {} : obj(body.criterionComments, "項目ごとのコメント");
       const ratings: Record<string, number | null> = {};
@@ -417,16 +503,25 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
     const body = obj(await readJson(c));
     return store.withLock(c.params.id, async () => {
       const iv = getInterview(app, c.params.id);
+      const kind = body.kind === undefined ? "note" : oneOf(body.kind, "メモの種類", ["note", "room"] as const);
       const recordingId = body.recordingId === null || body.recordingId === undefined ? null : id(body.recordingId, "録画");
-      if (recordingId && !iv.recordings.some((rec) => rec.id === recordingId)) {
-        throw new ValidationError("録画が見つかりません");
+      const rec = recordingId ? iv.recordings.find((x) => x.id === recordingId) : undefined;
+      if (recordingId && !rec) throw new ValidationError("録画が見つかりません");
+      let tMs: number | null = null;
+      if (rec && body.live === true) {
+        // ライブで見ながらのメモ: 時刻はサーバーが録画の経過時間から決める(端末の時計に頼らない)
+        const live = liveInfo(app, iv.id, rec);
+        if (!live) throw new HttpError(409, "録画は終わっています。メモは録画の再生画面から追加してください");
+        tMs = live.elapsedMs;
+      } else if (rec) {
+        tMs = int(body.tMs, "時刻", { min: 0, max: 24 * 3600_000 });
       }
-      const tMs = recordingId ? int(body.tMs, "時刻", { min: 0, max: 24 * 3600_000 }) : null;
       const note: Note = {
         id: newId(9),
+        kind,
         recordingId,
         tMs,
-        text: str(body.text, "メモ", { max: 2000, min: 1, multiline: true }),
+        text: str(body.text, kind === "room" ? "メッセージ" : "メモ", { max: 2000, min: 1, multiline: true }),
         userId: c.user!.id,
         userName: c.user!.name,
         createdAt: new Date().toISOString(),
@@ -434,8 +529,20 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       const notes = [...store.notesOf(iv.id), note];
       if (notes.length > 2000) throw new HttpError(409, "メモの件数が上限に達しています");
       await store.saveNotes(iv.id, notes);
+      if (kind === "room") await audit(app, c, "room_message", iv.id);
       return { note, notes: notesView(app, iv, c.user!) };
     });
+  });
+
+  // 録画している端末が、面接室へのメッセージを受け取る
+  r.get("/api/interviews/:id/room-messages", "user", (c) => {
+    const iv = getInterview(app, c.params.id);
+    const since = isoDate(c.query.get("since") ?? undefined, "取得の起点");
+    const messages = store
+      .notesOf(iv.id)
+      .filter((n) => n.kind === "room" && (!since || n.createdAt > since))
+      .map((n) => ({ ...n, userName: store.userName(n.userId) }));
+    return { messages };
   });
 
   r.delete("/api/interviews/:id/notes/:noteId", "user", async (c) => {

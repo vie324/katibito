@@ -14,7 +14,7 @@ import { runRetention } from "./retention";
 import { ffmpegPath, resumeTranscodes } from "./transcode";
 import { registerAccountRoutes } from "./routes/account";
 import { registerAdminRoutes } from "./routes/admin";
-import { registerInterviewRoutes } from "./routes/interviews";
+import { canView, registerInterviewRoutes } from "./routes/interviews";
 import { registerRecordingRoutes } from "./routes/recordings";
 import { createStaticHandler } from "./static";
 import { Store } from "./store";
@@ -69,6 +69,7 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
     jobs: new Jobs(),
     setup: { code: null },
     lastOrigin: null,
+    live: new Map(),
   };
   const log = opts.log ?? true;
 
@@ -118,6 +119,11 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
 
     if (m.route.auth !== "none" && !c.user) throw new HttpError(401, "ログインしてください");
     if (m.route.auth === "admin" && c.user?.role !== "admin") throw new HttpError(403, "管理者のみ実行できます");
+    // 面接ごとの API は、その面接を見られる人だけ(見られない面接は「見つからない」と同じ応答にする)
+    if (c.user && c.params.id && url.pathname.startsWith("/api/interviews/")) {
+      const iv = store.interviews.get(c.params.id);
+      if (iv && !canView(ctx, c.user, iv)) throw new HttpError(404, "面接が見つかりません");
+    }
 
     const result = await m.route.handler(c);
     if (result === HANDLED || res.writableEnded) return;

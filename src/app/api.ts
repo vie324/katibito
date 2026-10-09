@@ -6,9 +6,11 @@ import type {
   ExpressionStats,
   InterviewDetail,
   InterviewListItem,
+  LiveInfo,
   Marker,
   Note,
   NotesView,
+  QuestionPlan,
   RecordingMeta,
   SessionInfo,
   Settings,
@@ -106,10 +108,14 @@ export type ConsentInput = {
 
 export type InterviewInput = {
   candidate: { displayName: string; kana: string; age: number | null; minor: boolean; note: string };
+  round: string;
   scheduledAt: string | null;
   location: string;
   interviewerIds: string[];
-  questions: string[];
+  questions: QuestionPlan[];
+  templateId?: string;
+  /** 同じ候補者の次の面接として登録する(前の面接のID) */
+  fromInterviewId?: string;
 };
 
 export type EvaluationInput = {
@@ -150,8 +156,12 @@ export const api = {
     request<InterviewDetail>("POST", `${iv(id)}/consent/withdraw`, { scope }),
 
   saveEvaluation: (id: string, b: EvaluationInput) => request<InterviewDetail>("PUT", `${iv(id)}/evaluations/me`, b),
-  addNote: (id: string, b: { recordingId: string | null; tMs: number | null; text: string }) =>
-    request<{ note: Note; notes: NotesView }>("POST", `${iv(id)}/notes`, b),
+  addNote: (
+    id: string,
+    b: { recordingId: string | null; tMs: number | null; text: string; kind?: "note" | "room"; live?: boolean },
+  ) => request<{ note: Note; notes: NotesView }>("POST", `${iv(id)}/notes`, b),
+  roomMessages: (id: string, since: string | null) =>
+    request<{ messages: Note[] }>("GET", `${iv(id)}/room-messages${since ? `?since=${enc(since)}` : ""}`),
   deleteNote: (id: string, noteId: string) =>
     request<{ notes: NotesView }>("DELETE", `${iv(id)}/notes/${enc(noteId)}`),
 
@@ -193,6 +203,10 @@ export const api = {
   deleteRecording: (id: string, rid: string) => request<{ recording: RecordingMeta }>("DELETE", recPath(id, rid)),
   videoUrl: (id: string, rid: string) => `${recPath(id, rid)}/video`,
   mp4Url: (id: string, rid: string) => `${recPath(id, rid)}/video?format=mp4`,
+  liveHeartbeat: (id: string, rid: string, clientId: string, b: { elapsedMs: number; question: string | null }) =>
+    request<{ live: LiveInfo | null }>("POST", `${recPath(id, rid)}/live`, b, { clientId, timeoutMs: 10_000 }),
+  liveChunk: (id: string, rid: string, index: number, signal?: AbortSignal) =>
+    request<ArrayBuffer>("GET", `${recPath(id, rid)}/chunks/${index}`, undefined, { signal, timeoutMs: 30_000 }),
   abortRecording: (id: string, rid: string, clientId?: string) =>
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/abort`, {}, { clientId }),
   reprocessRecording: (id: string, rid: string) =>

@@ -4,9 +4,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickBoxAt, boxCenter } from "../../analysis/candidate";
 import { AudioEngine } from "../../engine/audioEngine";
-import type { InterviewDetail, Marker } from "../../shared/types";
+import type { InterviewDetail, Marker, Note } from "../../shared/types";
 import { api, errorMessage } from "../api";
-import { formatBytes, formatClock } from "../format";
+import { formatBytes, formatClock, formatTime } from "../format";
 import { useUploads } from "../Layout";
 import { ConsentForm } from "../record/ConsentForm";
 import { FaceOverlay } from "../record/FaceOverlay";
@@ -134,6 +134,11 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
   const [elapsed, setElapsed] = useState(0);
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [currentQ, setCurrentQ] = useState<number | null>(null);
+  /** いまの質問を始めた時刻(録画開始からの ms) */
+  const [qStartMs, setQStartMs] = useState<number | null>(null);
+  const questionLabelRef = useRef<string | null>(null);
+  const [roomMessages, setRoomMessages] = useState<Note[]>([]);
+  const [seenMessageIds, setSeenMessageIds] = useState<Set<string>>(() => new Set());
   const [customQ, setCustomQ] = useState("");
   const [faceLostMs, setFaceLostMs] = useState(0);
   const [localId, setLocalId] = useState<string | null>(null);
@@ -337,6 +342,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
       setLocalId(recorder.localId);
       setMarkers([]);
       setCurrentQ(null);
+      setQStartMs(null);
       await acquireWakeLock();
       setStep("recording");
     } catch (e) {
@@ -390,10 +396,55 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
   const addMarker = useCallback((kind: Marker["kind"], label: string, qIndex: number | null = null) => {
     const r = recorderRef.current;
     if (!r) return;
-    r.addMarker(kind, label);
+    const m = r.addMarker(kind, label);
     setMarkers(r.markerList);
-    if (kind === "question") setCurrentQ(qIndex);
+    if (kind === "question") {
+      setCurrentQ(qIndex);
+      setQStartMs(m.tMs);
+      questionLabelRef.current = label;
+    }
   }, []);
+
+  // ライブ: 録画の経過時間を数秒ごとにサーバーへ知らせる(サーバー上の録画が作られてから)。
+  // その場にいない人が、数秒遅れで録画を見ながらメモを取れるようになる
+  useEffect(() => {
+    if (step !== "recording" || !localId) return;
+    const beat = async () => {
+      const rid = uploader.get(localId)?.serverRecordingId;
+      const r = recorderRef.current;
+      if (!rid || !r || r.isStopped) return;
+      await api
+        .liveHeartbeat(iv.id, rid, localId, { elapsedMs: Math.round(r.elapsedMs()), question: questionLabelRef.current })
+        .catch(() => undefined);
+    };
+    void beat();
+    const t = setInterval(() => void beat(), 5000);
+    return () => clearInterval(t);
+  }, [step, localId, iv.id]);
+
+  // 面接室へのメッセージ(その場にいない人から)。録画の準備中から受け取る
+  useEffect(() => {
+    if (step === "finished") return;
+    let since: string | null = new Date(Date.now() - 30 * 60_000).toISOString();
+    let alive = true;
+    const poll = async () => {
+      try {
+        const { messages } = await api.roomMessages(iv.id, since);
+        if (!alive || messages.length === 0) return;
+        since = messages[messages.length - 1].createdAt;
+        setRoomMessages((prev) => [...prev, ...messages.filter((m) => !prev.some((p) => p.id === m.id))]);
+      } catch {
+        // 通信できないときは次の周期で
+      }
+    };
+    void poll();
+    const t = setInterval(() => void poll(), 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [step, iv.id]);
+  const unread = roomMessages.filter((m) => !seenMessageIds.has(m.id));
 
   const removeMarker = (mid: string) => {
     const r = recorderRef.current;
@@ -524,6 +575,27 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
         </div>
 
         <div className="studio-side">
+          {unread.length > 0 && (
+            <div className="panel room-messages" role="status">
+              <div className="panel-title">
+                その場にいない人からのメッセージ
+                <span className="spacer" />
+                <button className="quiet small" onClick={() => setSeenMessageIds(new Set(roomMessages.map((m) => m.id)))}>
+                  確認した
+                </button>
+              </div>
+              <ul>
+                {unread.map((m) => (
+                  <li key={m.id}>
+                    <span className="room-from">
+                      {m.userName} <span className="muted small num">{formatTime(m.createdAt)}</span>
+                    </span>
+                    <span className="room-text">{m.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {!recording ? (
             <>
               <div className="panel">
@@ -601,6 +673,13 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
             </>
           ) : (
             <>
+              <QuestionClock
+                elapsedMs={elapsed}
+                qStartMs={qStartMs}
+                plannedMinutes={currentQ === null ? null : (iv.questionMinutes[currentQ] ?? null)}
+                totalPlannedMinutes={iv.questionMinutes.reduce<number>((a, m) => a + (m ?? 0), 0)}
+                label={currentQ === null ? null : `Q${currentQ + 1} ${iv.questions[currentQ]}`}
+              />
               <div className="panel">
                 <div className="panel-title">
                   いまの質問<span className="muted small">(N キーで次へ)</span>
@@ -616,6 +695,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
                       >
                         <span className="num qno">Q{i + 1}</span>
                         {q}
+                        {iv.questionMinutes[i] ? <span className="qmin num">{iv.questionMinutes[i]}分</span> : null}
                       </button>
                     );
                   })}
@@ -670,6 +750,52 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 質問ごとの経過時間と、時間の目安(評価シートで設定) */
+function QuestionClock({
+  elapsedMs,
+  qStartMs,
+  plannedMinutes,
+  totalPlannedMinutes,
+  label,
+}: {
+  elapsedMs: number;
+  qStartMs: number | null;
+  plannedMinutes: number | null;
+  totalPlannedMinutes: number;
+  label: string | null;
+}) {
+  if (!label && totalPlannedMinutes === 0) return null;
+  const qElapsed = qStartMs === null ? 0 : Math.max(0, elapsedMs - qStartMs);
+  const over = plannedMinutes !== null && qElapsed > plannedMinutes * 60_000;
+  const totalOver = totalPlannedMinutes > 0 && elapsedMs > totalPlannedMinutes * 60_000;
+  return (
+    <div className="panel question-clock">
+      {label && (
+        <div className={`qclock-row ${over ? "over" : ""}`}>
+          <span className="qclock-label">{label}</span>
+          <span className="num">
+            {formatClock(qElapsed)}
+            {plannedMinutes !== null && <span className="muted"> / 目安 {plannedMinutes}分</span>}
+          </span>
+        </div>
+      )}
+      {plannedMinutes !== null && (
+        <div className="qclock-bar">
+          <span className={over ? "over" : ""} style={{ width: `${Math.min(100, (qElapsed / (plannedMinutes * 60_000)) * 100)}%` }} />
+        </div>
+      )}
+      {totalPlannedMinutes > 0 && (
+        <div className={`qclock-row small ${totalOver ? "over" : ""}`}>
+          <span className="muted">面接全体</span>
+          <span className="num">
+            {formatClock(elapsedMs)} <span className="muted">/ 目安 {totalPlannedMinutes}分</span>
+          </span>
+        </div>
+      )}
     </div>
   );
 }

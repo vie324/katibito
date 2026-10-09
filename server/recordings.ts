@@ -6,8 +6,8 @@ import { gunzipSync } from "node:zlib";
 import { computeExpressionSummary, type ExpressionSummary } from "../src/analysis/expression";
 import { decodeFaceTrack, type FaceTrack } from "../src/analysis/faceTrack";
 import { INTERVIEW_ANALYSIS } from "../src/config/scoring";
-import type { Interview, RecordingMeta } from "../src/shared/types";
-import type { AppContext } from "./context";
+import type { Interview, LiveInfo, RecordingMeta } from "../src/shared/types";
+import { LIVE_STALE_MS, type AppContext } from "./context";
 import { concatFiles, extensionFor, isWebm } from "./media";
 import { notifyRecordingReady } from "./notifications";
 import { scheduleTranscode } from "./transcode";
@@ -38,9 +38,22 @@ export async function receivedChunks(ctx: AppContext, iid: string, rid: string):
   }
 }
 
+/** 録画中なら、その状態(心拍が途絶えていれば null) */
+export function liveInfo(ctx: AppContext, iid: string, rec: RecordingMeta, now = Date.now()): LiveInfo | null {
+  if (rec.status !== "uploading") return null;
+  const st = ctx.live.get(`${iid}/${rec.id}`);
+  if (!st || now - st.updatedAt > LIVE_STALE_MS) return null;
+  return {
+    startedAt: new Date(st.anchorMs).toISOString(),
+    elapsedMs: Math.max(0, now - st.anchorMs),
+    question: st.question,
+    updatedAt: new Date(st.updatedAt).toISOString(),
+  };
+}
+
 /** 応答に載せる録画メタ。端末側の録画ID(送信の合言葉)は含めない */
-export function publicRecording(rec: RecordingMeta): RecordingMeta {
-  return { ...rec, clientId: "" };
+export function publicRecording(rec: RecordingMeta, live: LiveInfo | null = null): RecordingMeta {
+  return { ...rec, clientId: "", live };
 }
 
 export function videoPath(ctx: AppContext, iid: string, rec: RecordingMeta): string | null {

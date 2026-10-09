@@ -1,0 +1,254 @@
+/* v0.3 で増えた画面部品のスタイル(評価シート・ライブ視聴・文字起こし・記録票など)。
+   トークンと見た目の決まりは ops.css と同じ。 */
+
+.ok-text {
+  color: var(--ok);
+}
+
+/* ---------------------------------------------------------------- 評価シートの編集 */
+
+.plan-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.plan-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.plan-no {
+  width: 28px;
+  flex: none;
+}
+.plan-row input.minutes {
+  width: 64px;
+  flex: none;
+}
+.plan-row .weight {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.weight-share {
+  width: 36px;
+  text-align: right;
+  flex: none;
+}
+.template-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--space-2);
+}
+.template-bar select {
+  min-width: 220px;
+}
+
+/* ---------------------------------------------------------------- 合計点 */
+
+.score-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+.score-value {
+  font-size: 20px;
+  color: var(--ink);
+}
+.eval-score {
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.tally-score {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ---------------------------------------------------------------- 撮影画面: 質問の時間 */
+
+.question-clock {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.qclock-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+.qclock-label {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qclock-row.over .num {
+  color: var(--signal-a);
+}
+.qclock-bar {
+  height: 4px;
+  background: var(--rule);
+}
+.qclock-bar span {
+  display: block;
+  height: 100%;
+  background: var(--signal-e);
+}
+.qclock-bar span.over {
+  background: var(--signal-a);
+}
+.qmin {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+/* ---------------------------------------------------------------- 同じ候補者の面接 */
+
+.round-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+}
+.round-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.round-list li:last-child {
+  border-bottom: none;
+}
+.round-list li.current .round-name {
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .plan-row {
+    flex-wrap: wrap;
+  }
+  .plan-row input.grow {
+    flex-basis: calc(100% - 40px);
+  }
+}
+
+/* ---------------------------------------------------------------- 透かし */
+
+.watermark {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  color: rgba(255, 255, 255, 0.22);
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  transform: rotate(-12deg);
+  white-space: nowrap;
+  transition: all 1.2s ease;
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------------- ライブ視聴 */
+
+.chip-live {
+  color: #e0533a;
+  border-color: #e0533a;
+}
+.live-panel {
+  border-color: #e0533a;
+  margin-bottom: var(--space-4);
+}
+.live-panel .panel-title {
+  gap: var(--space-2);
+}
+.live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e0533a;
+  animation: pulse 1.4s ease-in-out infinite;
+  display: inline-block;
+}
+.live-q {
+  font-size: 12px;
+  color: var(--signal-a);
+  margin-left: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.live-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.live-video {
+  position: relative;
+  background: #000;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+.live-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.live-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.form.compact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* 撮影画面: その場にいない人からのメッセージ */
+.room-messages {
+  border-color: var(--signal-a);
+}
+.room-messages ul {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.room-messages li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.room-from {
+  font-size: 12px;
+  color: var(--signal-a);
+}
+.room-text {
+  font-size: 15px;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .live-grid {
+    grid-template-columns: 1fr;
+  }
+}

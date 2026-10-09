@@ -6,11 +6,42 @@ import type { ExpressionStats, InterviewDetail } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { DecisionPanel } from "../detail/DecisionPanel";
 import { EvaluationPanel } from "../detail/EvaluationPanel";
+import { LivePanel } from "../detail/LivePanel";
 import { ReviewPanel } from "../detail/ReviewPanel";
 import { formatDateTime } from "../format";
 import { Link, useRouter } from "../router";
 import { useSession } from "../session";
-import { Loading, Modal, Notice, StatusChip, useConfirm, useToast } from "../ui";
+import { Loading, Modal, Notice, StatusChip, useConfirm, useToast, VoteChip } from "../ui";
+
+/** 同じ候補者のほかの面接(一次・二次など) */
+function OtherRounds({ detail }: { detail: InterviewDetail }) {
+  const iv = detail.interview;
+  const all = [
+    ...detail.otherRounds,
+    { id: iv.id, round: iv.round, scheduledAt: iv.scheduledAt, createdAt: iv.createdAt, status: detail.status, decision: iv.decision?.result ?? null },
+  ].sort((a, b) => (a.scheduledAt ?? a.createdAt).localeCompare(b.scheduledAt ?? b.createdAt));
+  return (
+    <section className="panel rounds">
+      <div className="panel-title">この候補者の面接</div>
+      <ul className="round-list">
+        {all.map((r) => (
+          <li key={r.id} className={r.id === iv.id ? "current" : ""}>
+            {r.id === iv.id ? (
+              <span className="round-name">{r.round || "(段階なし)"}・この面接</span>
+            ) : (
+              <Link to={`/interviews/${r.id}`} className="round-name">
+                {r.round || "(段階なし)"}
+              </Link>
+            )}
+            <span className="muted small num">{formatDateTime(r.scheduledAt ?? r.createdAt)}</span>
+            <span className="spacer" />
+            {r.decision ? <VoteChip vote={r.decision} /> : <StatusChip status={r.status} />}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 export function InterviewDetailPage({ id }: { id: string }) {
   const { user } = useSession();
@@ -39,18 +70,22 @@ export function InterviewDetailPage({ id }: { id: string }) {
     };
   }, [id]);
 
-  // 録画の受信・処理中は状態を追う
+  // 録画の受信・処理中は状態を追う(まだ録画がない面接も、録画が始まったらライブで見られるように追う)
   const processing = detail?.interview.recordings.some((r) => r.status === "uploading" || r.status === "processing");
+  const waitingForRecording = !!detail && !detail.interview.decision && detail.interview.recordings.length === 0 && !!detail.interview.consent?.recording;
   useEffect(() => {
-    if (!processing) return;
-    const t = setInterval(() => {
-      api
-        .interview(id)
-        .then(setDetail)
-        .catch(() => undefined);
-    }, 5000);
+    if (!processing && !waitingForRecording) return;
+    const t = setInterval(
+      () => {
+        api
+          .interview(id)
+          .then(setDetail)
+          .catch(() => undefined);
+      },
+      processing ? 5000 : 15_000,
+    );
     return () => clearInterval(t);
-  }, [processing, id]);
+  }, [processing, waitingForRecording, id]);
 
   // 判定欄に出す表情の要約(顔が最も長く映っていた録画)
   const analysisKey = detail?.interview.recordings.map((r) => `${r.id}:${r.analysis}:${r.markers.length}`).join("|") ?? "";
@@ -78,8 +113,10 @@ export function InterviewDetailPage({ id }: { id: string }) {
   const c = iv.consent;
   const decided = !!iv.decision;
   const isAdmin = user?.role === "admin";
-  const canRecord = !decided && (!c || c.recording || iv.recordingDeclined);
   const activeRecs = iv.recordings.filter((r) => r.status !== "deleted");
+  const liveRec = iv.recordings.find((r) => r.live);
+  // ほかの端末で録画中のときは、録画の開始ボタンを出さない(同じ面接を2台で録らないように)
+  const canRecord = !decided && !liveRec && (!c || c.recording || iv.recordingDeclined);
 
   const deleteInterview = async () => {
     const ok = await confirm({
@@ -118,6 +155,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <div className="detail-title">
           <h2>{iv.candidate.displayName}</h2>
           {iv.candidate.kana && <span className="muted">{iv.candidate.kana}</span>}
+          {iv.round && <span className="badge">{iv.round}</span>}
           <StatusChip status={detail.status} />
         </div>
         <span className="spacer" />
@@ -134,6 +172,9 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <button className="quiet" onClick={() => navigate(`/interviews/${iv.id}/edit`)}>
           編集
         </button>
+        <button className="quiet" onClick={() => navigate(`/interviews/new?from=${iv.id}`)} title="同じ候補者の二次面接などを登録します">
+          次の面接を登録
+        </button>
         {isAdmin && (
           <button className="quiet danger-text" onClick={() => void deleteInterview()}>
             削除
@@ -145,6 +186,11 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <span>
           <span className="muted">面接日時</span> {formatDateTime(iv.scheduledAt)}
         </span>
+        {iv.templateName && (
+          <span>
+            <span className="muted">評価シート</span> {iv.templateName}
+          </span>
+        )}
         {iv.location && (
           <span>
             <span className="muted">場所</span> {iv.location}
@@ -201,6 +247,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
 
       <div className="detail-grid">
         <div className="detail-main">
+          {liveRec && <LivePanel detail={detail} setDetail={setDetail} rec={liveRec} />}
           {activeRecs.length > 0 ? (
             <ReviewPanel detail={detail} setDetail={setDetail} stats={stats} />
           ) : (
@@ -220,6 +267,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
           )}
         </div>
         <div className="detail-side">
+          {detail.otherRounds.length > 0 && <OtherRounds detail={detail} />}
           <EvaluationPanel detail={detail} setDetail={setDetail} />
           <DecisionPanel detail={detail} setDetail={setDetail} summary={summary} />
         </div>

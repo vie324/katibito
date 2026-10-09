@@ -3,18 +3,19 @@
 import { useEffect, useState } from "react";
 import { renderConsentText } from "../../shared/consent";
 import { DEFAULT_CONSENT_BODY, DEFAULT_CONSENT_TITLE, RECORDING_PRESETS } from "../../shared/defaults";
-import type { AuditEntry, Criterion, Settings, UserPublic } from "../../shared/types";
+import type { AuditEntry, InterviewTemplate, Settings, UserPublic } from "../../shared/types";
 import { api, errorMessage } from "../api";
+import { CriteriaEditor, QuestionPlanEditor } from "../components/TemplateEditors";
 import { formatDateTime } from "../format";
 import { Link } from "../router";
 import { useSession } from "../session";
 import { Field, Loading, Modal, Notice, useAction, useToast } from "../ui";
 
-type Tab = "basic" | "criteria" | "consent" | "retention" | "users" | "audit" | "export";
+type Tab = "basic" | "templates" | "consent" | "retention" | "users" | "audit" | "export";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "basic", label: "基本" },
-  { key: "criteria", label: "評価項目・質問" },
+  { key: "templates", label: "評価シート" },
   { key: "consent", label: "同意文" },
   { key: "retention", label: "保存期間" },
   { key: "users", label: "ユーザー" },
@@ -43,7 +44,7 @@ export default function SettingsPage() {
       toast("設定を保存しました");
     }
   };
-  const settingsTab = tab === "basic" || tab === "criteria" || tab === "consent" || tab === "retention";
+  const settingsTab = tab === "basic" || tab === "templates" || tab === "consent" || tab === "retention";
 
   return (
     <div className="page">
@@ -57,7 +58,7 @@ export default function SettingsPage() {
       </div>
 
       {tab === "basic" && <BasicTab draft={draft} setDraft={setDraft} />}
-      {tab === "criteria" && <CriteriaTab draft={draft} setDraft={setDraft} />}
+      {tab === "templates" && <TemplatesTab draft={draft} setDraft={setDraft} />}
       {tab === "consent" && <ConsentTab draft={draft} setDraft={setDraft} />}
       {tab === "retention" && <RetentionTab draft={draft} setDraft={setDraft} />}
       {tab === "users" && <UsersTab />}
@@ -102,6 +103,15 @@ function BasicTab({ draft, setDraft }: TabProps) {
           <span className="muted small">— 先に見た評価に引っぱられるのを防ぎます</span>
         </span>
       </label>
+      <Field label="面接官が見られる面接" hint="管理者はすべての面接を見られます">
+        <select
+          value={draft.access.interviewerScope}
+          onChange={(e) => setDraft({ ...draft, access: { ...draft.access, interviewerScope: e.target.value as Settings["access"]["interviewerScope"] } })}
+        >
+          <option value="all">すべての面接</option>
+          <option value="assigned">面接官に選ばれた面接と、自分が登録した面接だけ</option>
+        </select>
+      </Field>
       <Field label="録画の画質" hint="面接1時間あたりのデータ量の目安です。回線が細い会場では「軽量」を選んでください">
         <select
           value={draft.recording.videoBitsPerSecond}
@@ -131,55 +141,91 @@ function BasicTab({ draft, setDraft }: TabProps) {
   );
 }
 
-function CriteriaTab({ draft, setDraft }: TabProps) {
-  const setCriteria = (criteria: Criterion[]) => setDraft({ ...draft, criteria });
-  const move = (i: number, d: -1 | 1) => {
-    const list = [...draft.criteria];
-    const j = i + d;
-    if (j < 0 || j >= list.length) return;
-    [list[i], list[j]] = [list[j], list[i]];
-    setCriteria(list);
+function TemplatesTab({ draft, setDraft }: TabProps) {
+  const [selected, setSelected] = useState(draft.defaultTemplateId);
+  const t = draft.templates.find((x) => x.id === selected) ?? draft.templates[0];
+  const setTemplate = (patch: Partial<InterviewTemplate>) =>
+    setDraft({ ...draft, templates: draft.templates.map((x) => (x.id === t.id ? { ...x, ...patch } : x)) });
+
+  const add = (base?: InterviewTemplate) => {
+    const id = `t${Date.now().toString(36)}`;
+    const names = new Set(draft.templates.map((x) => x.name));
+    let name = base ? `${base.name}のコピー` : "新しい評価シート";
+    for (let n = 2; names.has(name); n++) name = `${base ? `${base.name}のコピー` : "新しい評価シート"}${n}`;
+    const next: InterviewTemplate = base
+      ? { ...structuredClone(base), id, name }
+      : { id, name, criteria: [{ id: `c${Date.now().toString(36)}`, label: "", description: "", weight: 1 }], questions: [], passLine: null };
+    setDraft({ ...draft, templates: [...draft.templates, next] });
+    setSelected(id);
   };
+  const remove = () => {
+    if (draft.templates.length <= 1 || t.id === draft.defaultTemplateId) return;
+    if (!window.confirm(`評価シート「${t.name}」を削除しますか?(この評価シートで登録済みの面接には影響しません)`)) return;
+    const templates = draft.templates.filter((x) => x.id !== t.id);
+    setDraft({ ...draft, templates });
+    setSelected(draft.defaultTemplateId);
+  };
+
   return (
     <div className="panel pad form">
-      <h3>評価項目</h3>
-      <p className="muted small">面接官が1〜5で評価する項目です。項目を削除しても、過去の評価に残っている値は消えません(表示されなくなります)。</p>
-      {draft.criteria.map((c, i) => (
-        <div key={c.id} className="criterion-edit">
-          <input
-            value={c.label}
-            onChange={(e) => setCriteria(draft.criteria.map((x) => (x.id === c.id ? { ...x, label: e.target.value } : x)))}
-            placeholder="項目名"
-            maxLength={30}
-          />
-          <input
-            value={c.description}
-            onChange={(e) => setCriteria(draft.criteria.map((x) => (x.id === c.id ? { ...x, description: e.target.value } : x)))}
-            placeholder="説明(評価の観点)"
-            maxLength={200}
-            className="grow"
-          />
-          <button className="quiet small" onClick={() => move(i, -1)} aria-label="上へ">
-            ↑
-          </button>
-          <button className="quiet small" onClick={() => move(i, 1)} aria-label="下へ">
-            ↓
-          </button>
-          <button className="quiet small danger-text" onClick={() => setCriteria(draft.criteria.filter((x) => x.id !== c.id))}>
-            削除
-          </button>
-        </div>
-      ))}
-      <div className="row-actions left">
+      <p className="muted small">
+        評価シートは「評価項目(重みつき)」と「質問(時間の目安つき)」の組み合わせです。面接の種類ごとに用意し、面接の登録時に選びます。
+        登録済みの面接は登録時の内容を使うため、ここで変更しても過去の評価は変わりません。
+      </p>
+      <div className="template-bar">
+        <select value={t.id} onChange={(e) => setSelected(e.target.value)} aria-label="編集する評価シート">
+          {draft.templates.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name}
+              {x.id === draft.defaultTemplateId ? "(既定)" : ""}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="quiet small" onClick={() => add()} disabled={draft.templates.length >= 20}>
+          新しく作る
+        </button>
+        <button type="button" className="quiet small" onClick={() => add(t)} disabled={draft.templates.length >= 20}>
+          複製
+        </button>
         <button
-          onClick={() => setCriteria([...draft.criteria, { id: `c${Date.now().toString(36)}`, label: "", description: "" }])}
-          disabled={draft.criteria.length >= 15}
+          type="button"
+          className="quiet small"
+          disabled={t.id === draft.defaultTemplateId}
+          onClick={() => setDraft({ ...draft, defaultTemplateId: t.id })}
         >
-          項目を追加
+          既定にする
+        </button>
+        <button type="button" className="quiet small danger-text" disabled={draft.templates.length <= 1 || t.id === draft.defaultTemplateId} onClick={remove}>
+          削除
         </button>
       </div>
 
+      <div className="grid2">
+        <Field label="評価シートの名前">
+          <input value={t.name} maxLength={40} onChange={(e) => setTemplate({ name: e.target.value })} />
+        </Field>
+        <Field label="合格の目安(合計点)" hint="1〜5点。判定画面の集計に目安として表示します(合否は自動で決まりません)。空欄なら表示しません">
+          <input
+            type="number"
+            min={1}
+            max={5}
+            step={0.1}
+            value={t.passLine ?? ""}
+            onChange={(e) => setTemplate({ passLine: e.target.value === "" ? null : Math.max(1, Math.min(5, Math.round(Number(e.target.value) * 10) / 10)) })}
+          />
+        </Field>
+      </div>
+
+      <h3>評価項目</h3>
+      <p className="muted small">面接官が1〜5で評価する項目です。重みを大きくした項目ほど、合計点への影響が大きくなります。</p>
+      <CriteriaEditor value={t.criteria} onChange={(criteria) => setTemplate({ criteria })} />
+
+      <h3>質問と時間の目安</h3>
+      <p className="muted small">録画中に「いまこの質問」と記録するボタンになります。時間の目安を入れると、録画画面に質問ごとの経過時間が出ます。</p>
+      <QuestionPlanEditor value={t.questions} onChange={(questions) => setTemplate({ questions })} />
+
       <h3>評価の段階(1〜5の呼び方)</h3>
+      <p className="muted small">すべての評価シートで共通です。</p>
       <div className="rating-labels">
         {draft.ratingLabels.map((l, i) => (
           <label key={i} className="field">
@@ -192,20 +238,6 @@ function CriteriaTab({ draft, setDraft }: TabProps) {
           </label>
         ))}
       </div>
-
-      <h3>質問リストの初期値</h3>
-      <Field label="1行に1問" hint="面接を登録するときの初期値です。面接ごとに変更できます">
-        <textarea
-          rows={7}
-          value={draft.defaultQuestions.join("\n")}
-          onChange={(e) =>
-            setDraft({
-              ...draft,
-              defaultQuestions: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
-            })
-          }
-        />
-      </Field>
     </div>
   );
 }

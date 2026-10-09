@@ -322,12 +322,49 @@ try {
   await page.waitForTimeout(1500);
   await snap(page, "studio-setup");
 
+  // 面接官は別の端末でログインしておく(録画中にライブで見る)
+  const staff = await newPage(images, "staff");
+  await staff.goto(`${BASE}/login`);
+  await staff.getByLabel("ログインID").fill(STAFF.loginId);
+  await staff.getByRole("textbox", { name: "パスワード", exact: true }).fill(STAFF.password);
+  await staff.getByRole("button", { name: "ログイン" }).click();
+  await staff.getByRole("heading", { name: "面接一覧" }).waitFor();
+
   // ------------------------------------------------------------ 録画
   await page.getByRole("button", { name: "録画を開始" }).click();
   await page.getByText("録画中", { exact: true }).waitFor();
   await page.waitForTimeout(1500);
   await page.locator(".qbtn", { hasText: "自己紹介" }).click();
-  await page.waitForTimeout(9000);
+
+  // ------------------------------------------------------------ ライブ視聴(別の端末から数秒遅れで見る)
+  await staff.goto(interviewUrl);
+  await staff.locator(".live-panel").waitFor({ timeout: 30_000 });
+  const livePlaying = await staff
+    .waitForFunction(
+      () => {
+        const v = document.querySelector(".live-video video");
+        if (!v || v.readyState < 2) return false;
+        const t = v.currentTime;
+        return new Promise((r) => setTimeout(() => r(v.currentTime > t), 1500));
+      },
+      null,
+      { timeout: 30_000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!livePlaying) errors.push("ライブの映像が再生されない");
+  else log("ライブ視聴: 録画中の映像を別の端末で再生できる");
+  await staff.getByPlaceholder("いまの場面について(録画の時刻と一緒に残ります)").fill("ライブで見たメモ");
+  await staff.getByRole("button", { name: "この場面にメモ" }).click();
+  await staff.getByText("この場面にメモを残しました").waitFor();
+  await staff.getByPlaceholder("例: 最後に部活のことを聞いてください").fill("最後に部活のことを聞いてください");
+  await staff.getByRole("button", { name: "面接室に送る" }).click();
+  await page.locator(".room-messages", { hasText: "最後に部活のことを聞いてください" }).waitFor({ timeout: 15_000 });
+  await snap(staff, "live-view");
+  await snap(page, "studio-room-message");
+  await page.locator(".room-messages").getByRole("button", { name: "確認した" }).click();
+  log("面接室へのメッセージ: 録画している端末に表示された");
+
   await page.locator(".qbtn", { hasText: "志望理由" }).click();
   await page.keyboard.press("b");
   await page.waitForTimeout(9000);
@@ -398,12 +435,19 @@ try {
   await page.getByText(/提出済み/).first().waitFor();
   log("評価(管理者)OK");
 
+  // ライブで見ながら残したメモには、録画の時刻が付いている
+  const liveNote = await page.evaluate(async (url) => {
+    const id = url.split("/").pop();
+    const r = await fetch(`/api/interviews/${id}`, { headers: { "X-Requested-With": "katibito" } });
+    const d = await r.json();
+    return d.notes.notes.find((n) => n.text === "ライブで見たメモ") ?? null;
+  }, interviewUrl);
+  if (!liveNote || typeof liveNote.tMs !== "number" || liveNote.tMs < 1000 || liveNote.tMs > 40_000) {
+    errors.push(`ライブのメモの時刻が想定外: ${JSON.stringify(liveNote)}`);
+  } else log(`ライブのメモ: 録画の ${(liveNote.tMs / 1000).toFixed(1)} 秒の位置に残った`);
+
   // ------------------------------------------------------------ 評価(面接官): 提出するまで他の評価は見えない
-  const staff = await newPage(images, "staff");
-  await staff.goto(`${BASE}/login`);
-  await staff.getByLabel("ログインID").fill(STAFF.loginId);
-  await staff.getByRole("textbox", { name: "パスワード", exact: true }).fill(STAFF.password);
-  await staff.getByRole("button", { name: "ログイン" }).click();
+  await staff.goto(BASE);
   await staff.getByText("あなたの対応待ち").waitFor();
   await staff.locator(".todo-row", { hasText: "テスト 太郎" }).click();
   await staff.getByText("自分の評価を提出すると、ほかの評価者の評価とメモが表示されます").waitFor();

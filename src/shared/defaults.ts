@@ -1,6 +1,6 @@
 // 設定の初期値。管理者が「設定」画面で変更できる。
 
-import type { Settings } from "./types";
+import type { Criterion, InterviewTemplate, QuestionPlan, Settings } from "./types";
 
 export const DEFAULT_CONSENT_TITLE = "面接の録画と表情の計測についてのお願い";
 
@@ -29,24 +29,48 @@ export const DEFAULT_CONSENT_BODY = `{団体名}では、面接の内容を、�
 
 export const DEFAULT_RATING_LABELS = ["不十分", "やや不十分", "標準", "良い", "非常に良い"];
 
+export const DEFAULT_CRITERIA: Criterion[] = [
+  { id: "manner", label: "あいさつ・マナー", description: "入退室、あいさつ、言葉づかい", weight: 1 },
+  { id: "response", label: "受け答え", description: "質問を理解し、自分の言葉で答えられているか", weight: 1 },
+  { id: "motivation", label: "意欲・熱意", description: "取り組みたいこと、目標の具体性", weight: 1 },
+  { id: "cooperation", label: "人柄・協調性", description: "周囲と関わる姿勢、素直さ", weight: 1 },
+  { id: "expression", label: "表現力", description: "伝え方、話の分かりやすさ", weight: 1 },
+];
+
+export const DEFAULT_QUESTIONS: QuestionPlan[] = [
+  { text: "自己紹介", minutes: 2 },
+  { text: "志望理由", minutes: 3 },
+  { text: "最近がんばったこと", minutes: 3 },
+  { text: "得意なこと・好きなこと", minutes: 3 },
+  { text: "最後に質問", minutes: 2 },
+];
+
+export const DEFAULT_TEMPLATE_ID = "standard";
+
+export function defaultTemplate(): InterviewTemplate {
+  return {
+    id: DEFAULT_TEMPLATE_ID,
+    name: "標準",
+    criteria: DEFAULT_CRITERIA.map((c) => ({ ...c })),
+    questions: DEFAULT_QUESTIONS.map((q) => ({ ...q })),
+    passLine: null,
+  };
+}
+
 export function defaultSettings(now = new Date().toISOString()): Settings {
   return {
     orgName: "",
     contact: "",
-    criteria: [
-      { id: "manner", label: "あいさつ・マナー", description: "入退室、あいさつ、言葉づかい" },
-      { id: "response", label: "受け答え", description: "質問を理解し、自分の言葉で答えられているか" },
-      { id: "motivation", label: "意欲・熱意", description: "取り組みたいこと、目標の具体性" },
-      { id: "cooperation", label: "人柄・協調性", description: "周囲と関わる姿勢、素直さ" },
-      { id: "expression", label: "表現力", description: "伝え方、話の分かりやすさ" },
-    ],
+    templates: [defaultTemplate()],
+    defaultTemplateId: DEFAULT_TEMPLATE_ID,
     ratingLabels: [...DEFAULT_RATING_LABELS],
-    defaultQuestions: ["自己紹介", "志望理由", "最近がんばったこと", "得意なこと・好きなこと", "最後に質問"],
     consent: { title: DEFAULT_CONSENT_TITLE, body: DEFAULT_CONSENT_BODY },
     retention: { videoDaysAfterDecision: 90, videoDaysUndecided: 180 },
     blindEvaluation: true,
     recording: { videoBitsPerSecond: 1_000_000, width: 1280, height: 720 },
     webhookUrl: null,
+    access: { interviewerScope: "all" },
+    security: { watermark: true, requireTotpForAdmins: false },
     updatedAt: now,
     updatedBy: null,
   };
