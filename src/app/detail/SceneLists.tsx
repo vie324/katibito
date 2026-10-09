@@ -5,9 +5,36 @@ import type { ExpressionSummary, Highlight, SegmentSummary } from "../../analysi
 import { formatMetric } from "../../analysis/metricsMeta";
 import type { Note } from "../../shared/types";
 import { formatClock, formatDateTime } from "../format";
+import { Link } from "../router";
 import { useSession } from "../session";
 
 const KIND_ICON: Record<Highlight["kind"], string> = { smile: "☺", expression: "◆", gap: "!" };
+
+/** メモの本文。このアプリの中へのリンク(場面へのリンクなど)だけ押せるようにする(外部のサイトへは開かない) */
+export function NoteText({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return (
+    <>
+      {parts.map((p, i) => {
+        if (/^https?:\/\//.test(p)) {
+          try {
+            const u = new URL(p);
+            if (u.origin === window.location.origin) {
+              return (
+                <Link key={i} to={u.pathname + u.search}>
+                  {u.searchParams.get("t") ? `場面へのリンク(${formatClock(Number(u.searchParams.get("t")) * 1000)})` : "リンク"}
+                </Link>
+              );
+            }
+          } catch {
+            // URL として読めなければ文字のまま
+          }
+        }
+        return <span key={i}>{p}</span>;
+      })}
+    </>
+  );
+}
 
 export function HighlightList({ highlights, onSeek }: { highlights: Highlight[]; onSeek: (ms: number) => void }) {
   if (highlights.length === 0) return <div className="muted small pad">目立った場面は見つかりませんでした。</div>;
@@ -133,7 +160,10 @@ export function NotesList({
               <span className="note-time muted">全体</span>
             )}
             <div className="note-body">
-              <div className="note-text">{n.text}</div>
+              <div className="note-text">
+                <NoteText text={n.text} />
+              </div>
+              {n.kind === "room" && <div className="muted small">面接室へのメッセージ</div>}
               <div className="muted small">
                 {n.userName} ・ {formatDateTime(n.createdAt)}
                 {(n.userId === user?.id || user?.role === "admin") && (

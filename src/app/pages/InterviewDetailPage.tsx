@@ -177,6 +177,14 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <button className="quiet" onClick={() => navigate(`/interviews/new?from=${iv.id}`)} title="同じ候補者の二次面接などを登録します">
           次の面接を登録
         </button>
+        <button className="quiet" onClick={() => navigate(`/interviews/${iv.id}/report`)} title="印刷・PDF 保存用の記録票">
+          記録票
+        </button>
+        {isAdmin && decided && (
+          <button className="quiet" onClick={() => navigate(`/interviews/${iv.id}/notice`)}>
+            合否通知書
+          </button>
+        )}
         {isAdmin && (
           <button className="quiet danger-text" onClick={() => void deleteInterview()}>
             削除

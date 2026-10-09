@@ -535,6 +535,16 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
     });
   });
 
+  // 記録票・通知書を印刷した(操作ログに残す)
+  r.post("/api/interviews/:id/printed", "user", async (c) => {
+    const body = obj(await readJson(c, 4096));
+    const kind = oneOf(body.kind, "印刷したもの", ["report", "notice"] as const);
+    if (kind === "notice" && c.user!.role !== "admin") throw new HttpError(403, "管理者のみ実行できます");
+    const iv = getInterview(app, c.params.id);
+    await audit(app, c, kind === "report" ? "report_print" : "notice_print", iv.id);
+    return { ok: true };
+  });
+
   // 録画している端末が、面接室へのメッセージを受け取る
   r.get("/api/interviews/:id/room-messages", "user", (c) => {
     const iv = getInterview(app, c.params.id);

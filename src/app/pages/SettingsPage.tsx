@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { renderConsentText } from "../../shared/consent";
 import { DEFAULT_CONSENT_BODY, DEFAULT_CONSENT_TITLE, RECORDING_PRESETS } from "../../shared/defaults";
-import type { AuditEntry, InterviewTemplate, Settings, TranscriptionStatus, UserPublic } from "../../shared/types";
+import { DEFAULT_NOTICES, NOTICE_PLACEHOLDERS } from "../../shared/notice";
+import { VOTE_LABEL } from "../../shared/status";
+import type { AuditEntry, InterviewTemplate, NoticeTemplate, Settings, TranscriptionStatus, UserPublic, Vote } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { CriteriaEditor, QuestionPlanEditor } from "../components/TemplateEditors";
 import { formatDateTime } from "../format";
@@ -11,13 +13,14 @@ import { Link } from "../router";
 import { useSession } from "../session";
 import { Field, Loading, Modal, Notice, useAction, useToast } from "../ui";
 
-type Tab = "basic" | "templates" | "features" | "consent" | "retention" | "users" | "audit" | "export";
+type Tab = "basic" | "templates" | "features" | "consent" | "notices" | "retention" | "users" | "audit" | "export";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "basic", label: "基本" },
   { key: "templates", label: "評価シート" },
   { key: "features", label: "機能" },
   { key: "consent", label: "同意文" },
+  { key: "notices", label: "通知書" },
   { key: "retention", label: "保存期間" },
   { key: "users", label: "ユーザー" },
   { key: "audit", label: "操作ログ" },
@@ -45,7 +48,7 @@ export default function SettingsPage() {
       toast("設定を保存しました");
     }
   };
-  const settingsTab = tab === "basic" || tab === "templates" || tab === "features" || tab === "consent" || tab === "retention";
+  const settingsTab = ["basic", "templates", "features", "consent", "notices", "retention"].includes(tab);
 
   return (
     <div className="page">
@@ -62,6 +65,7 @@ export default function SettingsPage() {
       {tab === "templates" && <TemplatesTab draft={draft} setDraft={setDraft} />}
       {tab === "features" && <FeaturesTab draft={draft} setDraft={setDraft} />}
       {tab === "consent" && <ConsentTab draft={draft} setDraft={setDraft} />}
+      {tab === "notices" && <NoticesTab draft={draft} setDraft={setDraft} />}
       {tab === "retention" && <RetentionTab draft={draft} setDraft={setDraft} />}
       {tab === "users" && <UsersTab />}
       {tab === "audit" && <AuditTab />}
@@ -369,6 +373,35 @@ function ConsentTab({ draft, setDraft }: TabProps) {
   );
 }
 
+function NoticesTab({ draft, setDraft }: TabProps) {
+  const set = (k: Vote, patch: Partial<NoticeTemplate>) =>
+    setDraft({ ...draft, notices: { ...draft.notices, [k]: { ...draft.notices[k], ...patch } } });
+  return (
+    <div className="panel pad form">
+      <p className="muted small">
+        判定のあとに、面接の詳細画面の「合否通知書」から印刷できる文書のひな形です。
+        差し込める語: {NOTICE_PLACEHOLDERS.join(" ")}({"{宛名}"} は保護者の同意があれば保護者と本人の2行になります)。
+      </p>
+      {(["pass", "fail", "hold"] as Vote[]).map((k) => (
+        <div key={k} className="notice-template">
+          <h3>{VOTE_LABEL[k]}のとき</h3>
+          <Field label="タイトル">
+            <input value={draft.notices[k].title} maxLength={100} onChange={(e) => set(k, { title: e.target.value })} />
+          </Field>
+          <Field label="本文">
+            <textarea rows={10} value={draft.notices[k].body} onChange={(e) => set(k, { body: e.target.value })} />
+          </Field>
+          <div className="row-actions left">
+            <button className="quiet small" onClick={() => set(k, { ...DEFAULT_NOTICES[k] })}>
+              初期の文面に戻す
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RetentionTab({ draft, setDraft }: TabProps) {
   const toast = useToast();
   const { busy, error, run } = useAction();
@@ -580,6 +613,8 @@ const ACTION_LABEL: Record<string, string> = {
   transcript_view: "文字起こしの閲覧",
   transcript_request: "文字起こしのやり直し",
   transcription_prepare: "文字起こしのモデルの取得",
+  report_print: "記録票の印刷",
+  notice_print: "合否通知書の印刷",
 };
 
 function AuditTab() {

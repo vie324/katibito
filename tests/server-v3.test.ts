@@ -282,3 +282,34 @@ describe("ライブ視聴・面接室へのメッセージ", () => {
     expect(later.json.messages).toHaveLength(0);
   });
 });
+
+describe("記録票・合否通知書", () => {
+  it("印刷の記録が操作ログに残る。合否通知書の印刷は管理者だけ", async () => {
+    const iid = await newInterview(alice, { candidate: { displayName: "印刷の人" } });
+    expect((await alice.req("POST", `/api/interviews/${iid}/printed`, { kind: "report" })).status).toBe(200);
+    expect((await alice.req("POST", `/api/interviews/${iid}/printed`, { kind: "notice" })).status).toBe(403);
+    expect((await admin.req("POST", `/api/interviews/${iid}/printed`, { kind: "notice" })).status).toBe(200);
+    const log = (await admin.req("GET", "/api/audit")).json.entries as { action: string; interviewId: string }[];
+    expect(log.some((e) => e.action === "report_print" && e.interviewId === iid)).toBe(true);
+    expect(log.some((e) => e.action === "notice_print" && e.interviewId === iid)).toBe(true);
+  });
+
+  it("通知書の文面を設定で変更でき、差し込みは候補者・保護者・団体名に置き換わる", async () => {
+    const { renderNotice } = await import("../src/shared/notice");
+    const s = await settings();
+    const notices = { ...s.notices, pass: { title: "合格のお知らせ", body: "{宛名}\n{団体名}の面接({面接日})の結果、合格です。" } };
+    expect((await admin.req("PUT", "/api/settings", { ...s, notices })).status).toBe(200);
+    const s2 = await settings();
+    expect(s2.notices.pass.title).toBe("合格のお知らせ");
+    const iv = {
+      candidate: { displayName: "Y.T.", kana: "", age: 12, minor: true, note: "" },
+      consent: { candidateName: "山田 太郎", guardianName: "山田 花子" },
+      scheduledAt: "2026-10-01T01:00:00.000Z",
+      createdAt: "2026-10-01T00:00:00.000Z",
+    } as never;
+    const r = renderNotice(s2.notices.pass, iv, { orgName: "テスト塾", contact: "03-0000-0000" });
+    expect(r.body).toBe("山田 花子 様\n山田 太郎 様\nテスト塾の面接(2026年10月1日)の結果、合格です。");
+    // 本文が短すぎるものは保存できない
+    expect((await admin.req("PUT", "/api/settings", { ...s2, notices: { ...s2.notices, fail: { title: "x", body: "短い" } } })).status).toBe(400);
+  });
+});

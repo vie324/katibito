@@ -287,6 +287,7 @@ export function mergeSettings(saved: LegacySettings): Settings {
     access: { ...d.access, ...(saved.access ?? {}) },
     security: { ...d.security, ...(saved.security ?? {}) },
     transcription: { ...d.transcription, ...(saved.transcription ?? {}) },
+    notices: { ...d.notices, ...(saved.notices ?? {}) },
     ratingLabels: saved.ratingLabels ?? d.ratingLabels,
   };
 }

@@ -328,3 +328,179 @@
   padding: var(--space-2) var(--space-3);
   border-left: 2px solid var(--rule);
 }
+
+/* ---------------------------------------------------------------- 記録票・通知書(印刷) */
+
+.print-page {
+  max-width: 920px;
+  margin: 0 auto;
+}
+.print-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+.print-hint {
+  margin: 0 0 var(--space-3);
+}
+.notice-editor {
+  margin-bottom: var(--space-4);
+}
+.paper {
+  background: #fff;
+  color: #161616;
+  padding: 16mm 15mm;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 1.75;
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
+}
+.paper h1 {
+  font-size: 21px;
+  letter-spacing: 0.12em;
+  margin: 4px 0;
+  color: #111;
+}
+.paper h2 {
+  font-size: 14px;
+  color: #111;
+  border-bottom: 1px solid #888;
+  padding-bottom: 2px;
+  margin: 18px 0 8px;
+}
+.paper h3 {
+  font-size: 13px;
+  margin: 10px 0 2px;
+  color: #111;
+}
+.paper p {
+  margin: 4px 0;
+}
+.paper-head {
+  text-align: center;
+  margin-bottom: 8px;
+}
+.paper-org {
+  font-size: 13px;
+  color: #333;
+}
+.paper-meta,
+.paper-note,
+.paper-sub {
+  color: #555;
+  font-size: 11px;
+}
+.paper-sub {
+  margin-right: 6px;
+  font-weight: normal;
+}
+.paper h3 .paper-sub {
+  margin-left: 10px;
+}
+.paper-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.paper-table th,
+.paper-table td {
+  border: 1px solid #bbb;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.paper-table th {
+  background: #f1f1f1;
+  width: 110px;
+  font-weight: normal;
+  color: #333;
+}
+.paper-table.grid th {
+  width: auto;
+}
+.paper-table .num {
+  text-align: center;
+  font-family: var(--font-mono);
+}
+.paper-table tr.total td {
+  font-weight: 700;
+}
+.paper-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.paper-list li {
+  margin: 3px 0;
+}
+.paper .pre,
+.pre {
+  white-space: pre-wrap;
+}
+.paper-eval {
+  border-top: 1px dashed #bbb;
+  padding-top: 4px;
+  margin-top: 6px;
+}
+.letter {
+  min-height: 250mm;
+  font-size: 14px;
+  line-height: 2;
+}
+.letter h1 {
+  text-align: center;
+  margin: 10mm 0 8mm;
+  font-size: 19px;
+}
+.letter-date {
+  text-align: right;
+}
+.letter-from {
+  text-align: right;
+  margin-bottom: 6mm;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  html,
+  body,
+  .ops {
+    background: #fff !important;
+  }
+  .ops-bar,
+  .upload-panel,
+  .no-print,
+  .toasts {
+    display: none !important;
+  }
+  .ops-main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+  .print-page {
+    max-width: none;
+  }
+  .paper {
+    box-shadow: none;
+    padding: 0;
+  }
+  .paper section {
+    break-inside: auto;
+  }
+  .paper h2,
+  .paper h3 {
+    break-after: avoid;
+  }
+  .paper-table tr {
+    break-inside: avoid;
+  }
+}
+
+/* 確認画面の映像(透かしを重ねるための枠) */
+.review-video-frame {
+  position: relative;
+  overflow: hidden;
+}

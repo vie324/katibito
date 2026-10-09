@@ -1,5 +1,6 @@
 // 設定の初期値。管理者が「設定」画面で変更できる。
 
+import { DEFAULT_NOTICES } from "./notice";
 import type { Criterion, InterviewTemplate, QuestionPlan, Settings } from "./types";
 
 export const DEFAULT_CONSENT_TITLE = "面接の録画と表情の計測についてのお願い";
@@ -72,6 +73,7 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     webhookUrl: null,
     access: { interviewerScope: "all" },
     transcription: { enabled: true },
+    notices: structuredClone(DEFAULT_NOTICES),
     security: { watermark: true, requireTotpForAdmins: false },
     updatedAt: now,
     updatedBy: null,

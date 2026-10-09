@@ -53,6 +53,9 @@ export type InterviewTemplate = {
   passLine: number | null;
 };
 
+/** 合否通知書の文面 */
+export type NoticeTemplate = { title: string; body: string };
+
 export type Settings = {
   orgName: string;
   /** 同意文の {連絡先} に入る文言 */
@@ -91,6 +94,8 @@ export type Settings = {
     /** 録画の音声を文字起こしする(サーバーに whisper.cpp がある場合) */
     enabled: boolean;
   };
+  /** 合否通知書の文面(判定の結果ごと) */
+  notices: Record<Vote, NoticeTemplate>;
   security: {
     /** 再生中の映像に見ている人の名前を薄く重ねる */
     watermark: boolean;
@@ -123,7 +128,8 @@ export type ConsentRecord = {
   candidateName: string;
   guardianName: string | null;
   guardianRelation: string | null;
-  method: "onscreen" | "paper";
+  /** onscreen = 面接の場で画面に表示 / paper = 紙の同意書 / online = 事前に送ったリンクから本人・保護者が入力 */
+  method: "onscreen" | "paper" | "online";
   /** 提示した同意文の SHA-256(先頭12桁) */
   consentVersion: string;
   /** 提示した同意文そのもの(差し込み済み) */

@@ -17,6 +17,8 @@ const DemoApp = lazy(() => import("../demo/DemoApp"));
 const RecordPage = lazy(() => import("./pages/RecordPage"));
 const ImportPage = lazy(() => import("./pages/ImportPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const ReportPage = lazy(() => import("./pages/ReportPage"));
+const NoticePage = lazy(() => import("./pages/NoticePage"));
 
 export function Root() {
   return (
@@ -89,6 +91,8 @@ function AppRoutes() {
   else if ((m = matchPath("/interviews/:id/edit", path))) page = <InterviewEditPage id={m.id} />;
   else if ((m = matchPath("/interviews/:id/record", path))) page = <RecordPage id={m.id} />;
   else if ((m = matchPath("/interviews/:id/import", path))) page = <ImportPage id={m.id} />;
+  else if ((m = matchPath("/interviews/:id/report", path))) page = <ReportPage id={m.id} />;
+  else if ((m = matchPath("/interviews/:id/notice", path)) && user.role === "admin") page = <NoticePage id={m.id} />;
   else if ((m = matchPath("/interviews/:id", path))) page = <InterviewDetailPage id={m.id} />;
   else if (path === "/settings" && user.role === "admin") page = <SettingsPage />;
   else if (path === "/account") page = <AccountPage />;

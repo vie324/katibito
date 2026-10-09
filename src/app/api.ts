@@ -162,6 +162,7 @@ export const api = {
     id: string,
     b: { recordingId: string | null; tMs: number | null; text: string; kind?: "note" | "room"; live?: boolean },
   ) => request<{ note: Note; notes: NotesView }>("POST", `${iv(id)}/notes`, b),
+  recordPrinted: (id: string, kind: "report" | "notice") => request<{ ok: true }>("POST", `${iv(id)}/printed`, { kind }),
   roomMessages: (id: string, since: string | null) =>
     request<{ messages: Note[] }>("GET", `${iv(id)}/room-messages${since ? `?since=${enc(since)}` : ""}`),
   deleteNote: (id: string, noteId: string) =>

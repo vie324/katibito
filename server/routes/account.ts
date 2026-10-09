@@ -331,6 +331,18 @@ export function parseSettings(body: Record<string, unknown>, current: Settings):
       interviewerScope:
         body.access === undefined ? current.access.interviewerScope : oneOf(obj(body.access, "閲覧範囲").interviewerScope, "面接官の閲覧範囲", ["all", "assigned"] as const),
     },
+    notices: (() => {
+      if (body.notices === undefined) return current.notices;
+      const n = obj(body.notices, "通知書");
+      const one = (k: "pass" | "fail" | "hold", label: string) => {
+        const t = obj(n[k], `${label}の通知書`);
+        return {
+          title: str(t.title, `${label}の通知書のタイトル`, { max: 100, min: 1 }),
+          body: str(t.body, `${label}の通知書の本文`, { max: 5000, min: 10, multiline: true }),
+        };
+      };
+      return { pass: one("pass", "合格"), fail: one("fail", "不合格"), hold: one("hold", "保留") };
+    })(),
     transcription: {
       enabled:
         body.transcription === undefined ? current.transcription.enabled : bool(obj(body.transcription, "文字起こし").enabled, "文字起こしの設定"),
