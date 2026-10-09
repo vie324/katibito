@@ -19,6 +19,11 @@ type Form = {
   questions: string;
 };
 
+function ageUnder18(age: string): boolean {
+  const n = Number(age);
+  return age !== "" && Number.isFinite(n) && n < 18;
+}
+
 export function InterviewEditPage({ id }: { id?: string }) {
   const { users, settings, user } = useSession();
   const { navigate } = useRouter();
@@ -119,8 +124,13 @@ export function InterviewEditPage({ id }: { id?: string }) {
           </Field>
         </div>
         <label className="check">
-          <input type="checkbox" checked={form.minor} onChange={(e) => set("minor", e.target.checked)} />
-          <span>未成年(録画には保護者の同意が必要です)</span>
+          <input
+            type="checkbox"
+            checked={form.minor || ageUnder18(form.age)}
+            disabled={ageUnder18(form.age)}
+            onChange={(e) => set("minor", e.target.checked)}
+          />
+          <span>未成年(録画には保護者の同意が必要です){ageUnder18(form.age) ? "。18歳未満のため常に未成年として扱います" : ""}</span>
         </label>
         <Field label="メモ" hint="面接官への申し送りなど">
           <textarea value={form.note} onChange={(e) => set("note", e.target.value)} rows={2} maxLength={1000} />

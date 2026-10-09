@@ -20,7 +20,7 @@ import { arr, bool, id, int, isoDate, obj, oneOf, str, ValidationError } from ".
 import type { AppContext } from "../context";
 import { HttpError, readJson, type Ctx, type Router } from "../http";
 import { notifyDecision, notifyEvaluationSubmitted } from "../notifications";
-import { deleteAnalysisFiles, deleteRecordingFiles, forgetSummary } from "../recordings";
+import { deleteAnalysisFiles, deleteRecordingFiles, forgetSummary, publicRecording } from "../recordings";
 import { newId, type UserRecord } from "../store";
 
 const VOTES = ["pass", "hold", "fail"] as const;
@@ -113,7 +113,7 @@ export function buildDetail(app: AppContext, iv: Interview, user: UserRecord): I
     .filter((u): u is UserRecord => !!u)
     .map((u) => app.store.publicUser(u));
   return {
-    interview: iv,
+    interview: { ...iv, recordings: iv.recordings.map(publicRecording) },
     status: deriveStatus(iv, evals),
     interviewers,
     evaluations: evaluationsView(app, iv, user),
@@ -155,10 +155,15 @@ export function listItem(app: AppContext, iv: Interview, user: UserRecord): Inte
 // 入力の解析
 // ---------------------------------------------------------------------------
 
+/** 未成年として扱うか(保護者の同意が必要)。年齢が18歳未満なら、チェックの有無にかかわらず未成年 */
+export function isMinor(c: Pick<Candidate, "age" | "minor">): boolean {
+  return c.minor || (c.age !== null && c.age < 18);
+}
+
 function parseCandidate(v: unknown): Candidate {
   const o = obj(v, "候補者");
   const age = int(o.age, "年齢", { min: 0, max: 120, optional: true });
-  const minor = o.minor === undefined ? age !== null && age < 18 : bool(o.minor, "未成年");
+  const minor = (o.minor !== undefined && bool(o.minor, "未成年")) || (age !== null && age < 18);
   return {
     displayName: str(o.displayName, "候補者の表示名", { max: 60, min: 1 }),
     kana: str(o.kana, "ふりがな", { max: 60, optional: true }),
@@ -178,6 +183,13 @@ function parseInterviewers(app: AppContext, v: unknown): string[] {
 
 function parseQuestions(v: unknown): string[] {
   return arr(v, "質問", 30, (x, i) => str(x, `質問${i + 1}`, { max: 100, min: 1 }));
+}
+
+/** 録画の仕上げ(結合・索引付け)の最中は、ファイルを消す操作を受け付けない */
+function refuseWhileFinalizing(app: AppContext, iv: Interview): void {
+  if (iv.recordings.some((rec) => app.jobs.has(`finalize:${iv.id}:${rec.id}`))) {
+    throw new HttpError(409, "録画を処理中です。1〜2分待ってからもう一度実行してください");
+  }
 }
 
 export function registerInterviewRoutes(r: Router, app: AppContext): void {
@@ -223,11 +235,14 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
     return store.withLock(c.params.id, async () => {
       const iv = getInterview(app, c.params.id);
       if (iv.decision && c.user!.role !== "admin") throw new HttpError(409, "判定済みの面接は管理者のみ編集できます");
-      if (body.candidate !== undefined) iv.candidate = parseCandidate(body.candidate);
-      if (body.scheduledAt !== undefined) iv.scheduledAt = isoDate(body.scheduledAt, "面接日時");
-      if (body.location !== undefined) iv.location = str(body.location, "場所", { max: 100, optional: true });
-      if (body.interviewerIds !== undefined) iv.interviewerIds = parseInterviewers(app, body.interviewerIds);
-      if (body.questions !== undefined) iv.questions = parseQuestions(body.questions);
+      // すべて検証してから反映する(途中で入力エラーになっても中途半端に変わらないように)
+      const patch: Partial<Interview> = {};
+      if (body.candidate !== undefined) patch.candidate = parseCandidate(body.candidate);
+      if (body.scheduledAt !== undefined) patch.scheduledAt = isoDate(body.scheduledAt, "面接日時");
+      if (body.location !== undefined) patch.location = str(body.location, "場所", { max: 100, optional: true });
+      if (body.interviewerIds !== undefined) patch.interviewerIds = parseInterviewers(app, body.interviewerIds);
+      if (body.questions !== undefined) patch.questions = parseQuestions(body.questions);
+      Object.assign(iv, patch);
       await store.saveInterview(iv);
       await audit(app, c, "interview_update", iv.id);
       return buildDetail(app, iv, c.user!);
@@ -237,7 +252,8 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
   r.delete("/api/interviews/:id", "admin", async (c) => {
     const iid = c.params.id;
     await store.withLock(iid, async () => {
-      getInterview(app, iid);
+      const iv = getInterview(app, iid);
+      refuseWhileFinalizing(app, iv);
       await store.deleteInterview(iid);
       forgetSummary(app, iid);
     });
@@ -260,7 +276,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       const method = oneOf(body.method, "同意の方法", ["onscreen", "paper"] as const);
       const candidateName = str(body.candidateName, "本人の氏名", { max: 60, min: recording ? 1 : 0, optional: !recording });
       const guardianName = str(body.guardianName, "保護者の氏名", { max: 60, optional: true });
-      if (recording && iv.candidate.minor && !guardianName) {
+      if (recording && isMinor(iv.candidate) && !guardianName) {
         throw new ValidationError("未成年の候補者は保護者の同意(氏名)が必要です");
       }
       const consentText = str(body.consentText, "同意文", { max: 20_000, min: 10, multiline: true });
@@ -293,6 +309,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
     return store.withLock(c.params.id, async () => {
       const iv = getInterview(app, c.params.id);
       if (!iv.consent) throw new HttpError(409, "同意の記録がありません");
+      refuseWhileFinalizing(app, iv);
       for (const rec of iv.recordings) {
         if (rec.status === "deleted") continue;
         if (scope === "all") {
@@ -349,6 +366,17 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       }
       const prev = store.evaluationOf(iv.id, user.id);
       const now = new Date().toISOString();
+      const wasSubmitted = prev?.status === "submitted";
+      // 提出後の修正は回数と日時を残し、ほかの評価者・管理者にも見せる
+      // (先に仮の評価を提出して、ほかの人の評価を見てから書き換えた、が分かるように)
+      const changed =
+        wasSubmitted &&
+        (JSON.stringify(prev.ratings) !== JSON.stringify(ratings) ||
+          JSON.stringify(prev.criterionComments) !== JSON.stringify(criterionComments) ||
+          prev.vote !== vote ||
+          prev.comment !== comment);
+      const othersVisible =
+        changed && store.evaluationsOf(iv.id).some((e) => e.userId !== user.id && e.status === "submitted");
       const ev: Evaluation = {
         userId: user.id,
         userName: user.name,
@@ -356,9 +384,12 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
         criterionComments,
         vote,
         comment,
-        status: submit ? "submitted" : prev?.status === "submitted" ? "submitted" : "draft",
+        status: submit || wasSubmitted ? "submitted" : "draft",
         updatedAt: now,
-        submittedAt: submit ? now : prev?.submittedAt ?? null,
+        submittedAt: wasSubmitted ? prev.submittedAt : submit ? now : null,
+        revisions: (prev?.revisions ?? 0) + (changed ? 1 : 0),
+        revisedAt: changed ? now : (prev?.revisedAt ?? null),
+        revisedWhileOthersVisible: Boolean(prev?.revisedWhileOthersVisible) || othersVisible,
       };
       // 提出済みを下書き保存で取り下げることはできない(下書き保存 = 内容の更新のみ)
       if (!submit && prev?.status === "submitted") {
@@ -366,7 +397,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       }
       submittedNow = submit && prev?.status !== "submitted";
       await store.saveEvaluation(iv.id, ev);
-      await audit(app, c, submit ? "evaluation_submit" : "evaluation_save", iv.id);
+      await audit(app, c, changed ? "evaluation_revise" : submit ? "evaluation_submit" : "evaluation_save", iv.id);
       return buildDetail(app, iv, user);
     });
     if (submittedNow) {

@@ -41,6 +41,8 @@ export default function ImportPage({ id }: { id: string }) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const trackRef = useRef<FaceTrack | null>(null);
   const probeRef = useRef<HTMLVideoElement | null>(null);
+  /** 選んだファイルごとの送信先。送信に失敗しても同じ ID で送り直せば、届いた続きから再開できる */
+  const sendRef = useRef<{ clientId: string; rid: string | null; completed: boolean } | null>(null);
 
   useLeaveGuard(step === "upload" || step === "analyze", "取り込みの途中です。このページを離れると最初からやり直しになります。");
 
@@ -59,6 +61,14 @@ export default function ImportPage({ id }: { id: string }) {
     if (url) URL.revokeObjectURL(url);
   }, [url]);
 
+  // 途中まで送って取り込みをやめた場合は、サーバーに届いた分を消す
+  const abandonPartial = () => {
+    const s = sendRef.current;
+    sendRef.current = null;
+    if (s?.rid && !s.completed) void api.abortRecording(id, s.rid, s.clientId).catch(() => undefined);
+  };
+  useEffect(() => () => abandonPartial(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (loadError) return <Notice kind="error">{loadError}</Notice>;
   if (!detail || !settings) return <Loading />;
   const iv = detail.interview;
@@ -66,6 +76,8 @@ export default function ImportPage({ id }: { id: string }) {
 
   const choose = (f: File | null) => {
     if (url) URL.revokeObjectURL(url);
+    abandonPartial();
+    setUploadError(null);
     setFile(f);
     setMeta(null);
     trackRef.current = null;
@@ -88,21 +100,29 @@ export default function ImportPage({ id }: { id: string }) {
     const total = Math.max(1, Math.ceil(file.size / CHUNK_BYTES));
     setProgress({ sent: 0, total });
     try {
+      const send = (sendRef.current ??= { clientId: newLocalId(), rid: null, completed: false });
       const created = await api.createRecording(iv.id, {
-        clientId: newLocalId(),
+        clientId: send.clientId,
         source: "file",
         mimeType: guessMime(file),
         startedAt: new Date(file.lastModified || Date.now()).toISOString(),
         fileName: file.name,
       });
       const rid = created.recording.id;
-      const got = new Set(created.received);
+      send.rid = rid;
+      const status = created.recording.status;
+      if (status === "failed" || status === "deleted" || status === "purged") {
+        sendRef.current = null;
+        throw new Error("前回の送信はサーバー側で取り消されています。もう一度「取り込む」を押すと最初から送ります");
+      }
+      // 前回の送信で完了まで届いていれば、映像は送り直さない
+      const got = new Set(status === "uploading" ? created.received : Array.from({ length: total }, (_, i) => i));
       for (let i = 0; i < total; i++) {
         if (got.has(i)) continue;
         const blob = file.slice(i * CHUNK_BYTES, Math.min(file.size, (i + 1) * CHUNK_BYTES));
         for (let attempt = 0; ; attempt++) {
           try {
-            await api.putChunk(iv.id, rid, i, blob);
+            await api.putChunk(iv.id, rid, send.clientId, i, blob);
             break;
           } catch (e) {
             const retryable = !(e instanceof ApiError) || e.status === 0 || e.status >= 500 || e.status === 429;
@@ -112,16 +132,20 @@ export default function ImportPage({ id }: { id: string }) {
         }
         setProgress({ sent: i + 1, total });
       }
-      await api.completeRecording(iv.id, rid, {
-        chunkCount: total,
-        durationMs: meta?.durationMs ? Math.round(meta.durationMs) : null,
-        endedAt: new Date().toISOString(),
-        markers: [],
-      });
+      if (status === "uploading") {
+        await api.completeRecording(iv.id, rid, send.clientId, {
+          chunkCount: total,
+          durationMs: meta?.durationMs ? Math.round(meta.durationMs) : null,
+          endedAt: new Date().toISOString(),
+          markers: [],
+        });
+      }
+      send.completed = true;
       if (trackRef.current && analysisAllowed) {
         const gz = await gzipBytes(encodeFaceTrack(trackRef.current));
-        await api.putTrack(iv.id, rid, gz);
+        await api.putTrack(iv.id, rid, gz, send.clientId);
       }
+      sendRef.current = null;
       setStep("done");
     } catch (e) {
       setUploadError(errorMessage(e));
@@ -185,7 +209,16 @@ export default function ImportPage({ id }: { id: string }) {
             />
           )}
           {meta?.error && <Notice kind="error">{meta.error}</Notice>}
-          {uploadError && <Notice kind="error">送信に失敗しました: {uploadError}</Notice>}
+          {uploadError && (
+            <Notice kind="error">
+              送信に失敗しました: {uploadError}
+              {sendRef.current && file && (
+                <button className="small-btn" onClick={() => void upload()}>
+                  続きから送信する
+                </button>
+              )}
+            </Notice>
+          )}
           <div className="row-actions">
             <button className="quiet" onClick={() => navigate(`/interviews/${id}`)}>
               やめる

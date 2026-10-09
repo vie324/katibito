@@ -351,7 +351,12 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     if (!recorder) return;
     const track = analyzerRef.current?.stop() ?? null;
     analyzerRef.current = null;
-    await recorder.stop(track);
+    try {
+      await recorder.stop(track);
+    } catch (e) {
+      // 端末への最後の書き込みに失敗しても、画面は終了状態に進める(送信は続きから行う)
+      console.warn("[record] 録画の終了処理でエラー", e);
+    }
     uploader.activeRecording = null;
     void wakeRef.current?.release().catch(() => undefined);
     wakeRef.current = null;
@@ -436,10 +441,14 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
         <h2>録画を終了しました — {iv.candidate.displayName}</h2>
         <div className="panel pad">
           {done ? (
-            <Notice kind="ok">送信が完了しました。録画はサーバーで処理されたあと、面接の詳細画面で再生できるようになります。</Notice>
+            <Notice kind="ok">送信が完了しました。面接の詳細画面で録画を再生できます。</Notice>
           ) : (
             <>
-              <p>録画データを送信しています。完了まで、この端末の電源を切らないでください。</p>
+              <p>
+                {upload?.phase === "finishing"
+                  ? "サーバーで録画を仕上げています。まもなく完了します。"
+                  : "録画データを送信しています。完了まで、この端末の電源を切らないでください。"}
+              </p>
               <ProgressBar value={frac} label={upload ? `${upload.uploadedChunks}/${upload.chunkCount}` : "準備中"} />
               {upload?.error && <Notice kind={upload.phase === "error" ? "error" : "warn"}>{upload.error}</Notice>}
               <p className="muted small">

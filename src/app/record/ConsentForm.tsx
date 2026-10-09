@@ -19,7 +19,7 @@ export function ConsentForm({
   onCancel?: () => void;
 }) {
   const rendered = renderConsentText(settings);
-  const minor = interview.candidate.minor;
+  const minor = interview.candidate.minor || (interview.candidate.age !== null && interview.candidate.age < 18);
   const [method, setMethod] = useState<"onscreen" | "paper">("onscreen");
   const [recording, setRecording] = useState(false);
   const [analysis, setAnalysis] = useState(false);

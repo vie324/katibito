@@ -255,6 +255,14 @@ type ClusterInfo = {
 
 type RawRange = { start: number; end: number };
 
+/**
+ * まるごとメモリに読む要素の上限。サイズはファイルが申告する値なので、
+ * 壊れた(または細工された)ファイルで巨大なバッファを確保しないようにする
+ */
+const MAX_HEADER_BYTES = 64 * 1024;
+const MAX_META_BYTES = 4 * 1024 * 1024;
+const MAX_INSPECT_BYTES = 16 * 1024 * 1024;
+
 export async function indexWebm(inputPath: string, outputPath: string): Promise<WebmIndexResult> {
   const fileSize = (await stat(inputPath)).size;
   const fh = await open(inputPath, "r");
@@ -263,6 +271,7 @@ export async function indexWebm(inputPath: string, outputPath: string): Promise<
 
     const ebml = await readHeader(r, 0, fileSize);
     if (!ebml || ebml.id !== ID.EBML || ebml.size === null) throw new WebmFormatError("WebM ではありません");
+    if (ebml.size > MAX_HEADER_BYTES) throw new WebmFormatError("EBML ヘッダが大きすぎます");
     const headerEnd = ebml.dataStart + ebml.size;
 
     const seg = await readHeader(r, headerEnd, fileSize);
@@ -303,10 +312,13 @@ export async function indexWebm(inputPath: string, outputPath: string): Promise<
         truncated = true;
         break;
       }
+      if ((h.id === ID.Info || h.id === ID.Tracks) && h.size > MAX_META_BYTES) {
+        throw new WebmFormatError("Info / Tracks が大きすぎます");
+      }
       if (h.id === ID.Info) info = { start: pos, end };
       else if (h.id === ID.Tracks) tracks = { start: pos, end };
-      else if (h.id === ID.Tags || h.id === ID.Chapters || h.id === ID.Attachments) kept.push({ start: pos, end });
-      // SeekHead / Cues / Void / CRC-32 / その他は作り直すか捨てる
+      else if ((h.id === ID.Tags || h.id === ID.Chapters) && h.size <= MAX_META_BYTES) kept.push({ start: pos, end });
+      // SeekHead / Cues / Void / CRC-32 / Attachments(再生に不要)/ 大きすぎる Tags 等は作り直すか捨てる
       pos = end;
     }
 
@@ -504,6 +516,7 @@ async function parseCluster(
       break;
     }
     if (c.id === ID.Timecode) {
+      if (c.size > 8) throw new WebmFormatError("Cluster の Timecode が不正です");
       if (!(await r.ensure(c.dataStart, c.size))) {
         truncated = true;
         break;
@@ -576,7 +589,7 @@ export async function inspectWebm(path: string): Promise<{ durationMs: number | 
     while (pos < end) {
       const h = await readHeader(r, pos, end);
       if (!h || h.size === null) break;
-      if (h.id === ID.Info || h.id === ID.Cues) {
+      if ((h.id === ID.Info || h.id === ID.Cues) && h.size <= MAX_INSPECT_BYTES) {
         await r.ensure(h.dataStart, h.size);
         const buf = r.slice(h.dataStart, h.size);
         for (const c of children(buf, 0, buf.length)) {

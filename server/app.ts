@@ -36,7 +36,26 @@ function setSecurityHeaders(res: ServerResponse): void {
 
 function firstHeader(v: string | string[] | undefined): string | undefined {
   if (Array.isArray(v)) return v[0];
-  return v?.split(",")[0]?.trim();
+  return v?.split(",")[0]?.trim() || undefined;
+}
+
+/** 末尾の値。X-Forwarded-For は経由したプロキシが末尾に追記していくため、信頼できるのは末尾(直前のプロキシが見た接続元) */
+function lastHeader(v: string | string[] | undefined): string | undefined {
+  const all = (Array.isArray(v) ? v.join(",") : (v ?? "")).split(",").map((x) => x.trim()).filter(Boolean);
+  return all.at(-1);
+}
+
+/** 接続の情報(リバースプロキシの後ろでは X-Forwarded-* を使う) */
+export function requestMeta(
+  req: Pick<IncomingMessage, "headers" | "socket">,
+  trustProxy: boolean,
+): { secure: boolean; origin: string; ip: string } {
+  const secure = trustProxy
+    ? firstHeader(req.headers["x-forwarded-proto"]) === "https"
+    : Boolean((req.socket as { encrypted?: boolean }).encrypted);
+  const host = (trustProxy ? firstHeader(req.headers["x-forwarded-host"]) : undefined) ?? req.headers.host ?? "localhost";
+  const ip = (trustProxy ? lastHeader(req.headers["x-forwarded-for"]) : undefined) ?? req.socket.remoteAddress ?? "unknown";
+  return { secure, origin: `${secure ? "https" : "http"}://${host}`, ip };
 }
 
 export async function createApp(config: Config, opts: { log?: boolean } = {}): Promise<App> {
@@ -92,6 +111,9 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
       if (req.headers["x-requested-with"] !== "katibito") throw new HttpError(403, "不正なリクエストです");
       const origin = req.headers.origin;
       if (origin && origin !== c.origin) throw new HttpError(403, "不正なリクエスト元です");
+      // 通知のリンク先(APP_URL 未設定時)。ログイン済みの利用者のブラウザが送った Origin だけを使う
+      // (Host ヘッダを書き換えたリクエストで、リンク先を別のサイトに向けられないように)
+      if (!ctx.config.appUrl && c.user && origin === c.origin) ctx.lastOrigin = origin;
     }
 
     if (m.route.auth !== "none" && !c.user) throw new HttpError(401, "ログインしてください");
@@ -112,18 +134,9 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
       res.end();
       return;
     }
-    const secure = config.trustProxy
-      ? firstHeader(req.headers["x-forwarded-proto"]) === "https"
-      : Boolean((req.socket as { encrypted?: boolean }).encrypted);
-    const host = (config.trustProxy ? firstHeader(req.headers["x-forwarded-host"]) : undefined) ?? req.headers.host ?? "localhost";
-    const origin = `${secure ? "https" : "http"}://${host}`;
-    const ip =
-      (config.trustProxy ? firstHeader(req.headers["x-forwarded-for"]) : undefined) ??
-      req.socket.remoteAddress ??
-      "unknown";
+    const { secure, origin, ip } = requestMeta(req, config.trustProxy);
 
     if (url.pathname.startsWith("/api/")) {
-      if (!ctx.config.appUrl) ctx.lastOrigin = origin;
       const c: Ctx = {
         req,
         res,

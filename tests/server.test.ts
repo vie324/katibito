@@ -16,6 +16,9 @@ import { runRetention } from "../server/retention";
 
 const SETUP_CODE = "TEST-CODE";
 
+/** 録画した端末だけが持つ録画ID(送信の合言葉) */
+const fromDevice = (clientId: string): Record<string, string> => ({ "X-Recording-Client-Id": clientId });
+
 /** Cookie を保持するだけの簡易クライアント。接続先は常に現在の base(再起動テストで変わる) */
 class Client {
   cookie = "";
@@ -188,31 +191,47 @@ describe("運用の流れ(API)", () => {
     const r1 = await create();
     expect(r1.status).toBe(200);
     rec = r1.json.recording;
+    expect(rec.clientId).toBe(""); // 合言葉は応答に含めない
     expect((await create()).json.recording.id).toBe(rec.id); // 冪等
 
     const webm = readFileSync(path.join(__dirname, "fixtures", "chrome-recording.webm"));
     const parts = [webm.subarray(0, 20_000), webm.subarray(20_000, 50_000), webm.subarray(50_000)];
-    const put = (i: number) =>
-      alice.req("PUT", `/api/interviews/${iid}/recordings/${rec.id}/chunks/${i}`, undefined, { raw: Buffer.from(parts[i]) });
+    const put = (i: number, who = alice, headers = fromDevice("local-000001")) =>
+      who.req("PUT", `/api/interviews/${iid}/recordings/${rec.id}/chunks/${i}`, undefined, { raw: Buffer.from(parts[i]), headers });
+    // 録画した端末の録画IDがないと送れない(ほかの面接官が上書きできない)
+    expect((await put(0, alice, {})).status).toBe(403);
+    expect((await put(0, bob, fromDevice("local-999999"))).status).toBe(403);
     expect((await put(0)).status).toBe(200);
     expect((await put(2)).status).toBe(200);
     // 1 が抜けている
-    const early = await alice.req("POST", `/api/interviews/${iid}/recordings/${rec.id}/complete`, { chunkCount: 3, durationMs: 4000 });
+    const early = await alice.req(
+      "POST",
+      `/api/interviews/${iid}/recordings/${rec.id}/complete`,
+      { chunkCount: 3, durationMs: 4000 },
+      { headers: fromDevice("local-000001") },
+    );
     expect(early.status).toBe(409);
+    // 別の人が途中で完了させることはできない
+    expect((await bob.req("POST", `/api/interviews/${iid}/recordings/${rec.id}/complete`, { chunkCount: 1 })).status).toBe(403);
     const st = await alice.req("GET", `/api/interviews/${iid}/recordings/${rec.id}`);
     expect(st.json.received).toEqual([0, 2]);
     expect((await put(1)).status).toBe(200);
     expect((await put(1)).status).toBe(200); // 再送しても問題ない
 
-    const done = await alice.req("POST", `/api/interviews/${iid}/recordings/${rec.id}/complete`, {
-      chunkCount: 3,
-      durationMs: 4100,
-      markers: [
-        { tMs: 0, kind: "question", label: "自己紹介" },
-        { tMs: 60_000, kind: "question", label: "志望理由" },
-        { tMs: 90_000, kind: "bookmark", label: "★" },
-      ],
-    });
+    const done = await alice.req(
+      "POST",
+      `/api/interviews/${iid}/recordings/${rec.id}/complete`,
+      {
+        chunkCount: 3,
+        durationMs: 4100,
+        markers: [
+          { tMs: 0, kind: "question", label: "自己紹介" },
+          { tMs: 60_000, kind: "question", label: "志望理由" },
+          { tMs: 90_000, kind: "bookmark", label: "★" },
+        ],
+      },
+      { headers: fromDevice("local-000001") },
+    );
     expect(done.status).toBe(200);
     expect(["processing", "ready"]).toContain(done.json.recording.status);
     await app.ctx.jobs.idle();
@@ -223,6 +242,7 @@ describe("運用の流れ(API)", () => {
     expect(ready.indexed).toBe(true);
     expect(ready.durationMs).toBeGreaterThan(3000);
     expect(ready.markers).toHaveLength(3);
+    expect(ready.clientId).toBe("");
     expect(d.status).toBe("evaluating");
     expect(existsSync(path.join(dataDir, "interviews", iid, "recordings", rec.id, "chunks"))).toBe(false);
 
@@ -244,8 +264,17 @@ describe("運用の流れ(API)", () => {
 
   it("表情の計測データ: 受け取り → 集計 → マーカー変更で再集計", async () => {
     const gz = syntheticTrackGz();
-    const r = await alice.req("PUT", `/api/interviews/${iid}/recordings/${rec.id}/track`, undefined, { raw: gz, contentType: "application/gzip" });
+    const r = await alice.req("PUT", `/api/interviews/${iid}/recordings/${rec.id}/track`, undefined, {
+      raw: gz,
+      contentType: "application/gzip",
+      headers: fromDevice("local-000001"),
+    });
     expect(r.status).toBe(200);
+    // 計測済みの録画の計測し直し(上書き)は、録画した端末か管理者だけ
+    const over = (who: Client, headers: Record<string, string> = {}) =>
+      who.req("PUT", `/api/interviews/${iid}/recordings/${rec.id}/track`, undefined, { raw: gz, contentType: "application/gzip", headers });
+    expect((await over(bob)).status).toBe(403);
+    expect((await over(A)).status).toBe(200);
     const s = r.json.summary;
     expect(s.overall.expressiveness).toBeGreaterThan(0);
     expect(s.segments.map((x: { label: string }) => x.label)).toEqual(["自己紹介", "志望理由"]);
@@ -266,7 +295,10 @@ describe("運用の流れ(API)", () => {
     const sum = await bob.req("GET", `/api/interviews/${iid}/recordings/${rec.id}/summary`);
     expect(sum.json.summary.segments).toHaveLength(3);
 
-    const bad = await alice.req("PUT", `/api/interviews/${iid}/recordings/${rec.id}/track`, undefined, { raw: gzipSync(Buffer.from("garbage")) });
+    const bad = await alice.req("PUT", `/api/interviews/${iid}/recordings/${rec.id}/track`, undefined, {
+      raw: gzipSync(Buffer.from("garbage")),
+      headers: fromDevice("local-000001"),
+    });
     expect(bad.status).toBe(400);
 
     const stats = await bob.req("GET", "/api/stats/expression");
@@ -378,8 +410,9 @@ describe("運用の流れ(API)", () => {
     expect(rc.json.recording.originalName).toBe("IMG_0001.webm");
     await alice.req("PUT", `/api/interviews/${id2}/recordings/${rid}/chunks/0`, undefined, {
       raw: readFileSync(path.join(__dirname, "fixtures", "chrome-recording-alpha.webm")),
+      headers: fromDevice("local-000002"),
     });
-    await alice.req("POST", `/api/interviews/${id2}/recordings/${rid}/complete`, { chunkCount: 1 });
+    await alice.req("POST", `/api/interviews/${id2}/recordings/${rid}/complete`, { chunkCount: 1 }, { headers: fromDevice("local-000002") });
     await app.ctx.jobs.idle();
     // 計測への同意がないので顔トラックは受け付けない
     const t = await alice.req("PUT", `/api/interviews/${id2}/recordings/${rid}/track`, undefined, { raw: syntheticTrackGz() });
@@ -439,7 +472,10 @@ describe("録画の取り消しと再生用 MP4", () => {
     });
     const r = await A.req("POST", `/api/interviews/${id}/recordings`, { clientId: "local-abort-1", source: "live", mimeType: "video/webm" });
     const rid = r.json.recording.id;
-    await A.req("PUT", `/api/interviews/${id}/recordings/${rid}/chunks/0`, undefined, { raw: Buffer.from("partial") });
+    await A.req("PUT", `/api/interviews/${id}/recordings/${rid}/chunks/0`, undefined, {
+      raw: Buffer.from("partial"),
+      headers: fromDevice("local-abort-1"),
+    });
     const ab = await A.req("POST", `/api/interviews/${id}/recordings/${rid}/abort`, {});
     expect(ab.status).toBe(200);
     expect(ab.json.recording.status).toBe("deleted");
@@ -461,8 +497,9 @@ describe("録画の取り消しと再生用 MP4", () => {
     const rid = r.json.recording.id;
     await A.req("PUT", `/api/interviews/${id}/recordings/${rid}/chunks/0`, undefined, {
       raw: readFileSync(path.join(__dirname, "fixtures", "chrome-recording.webm")),
+      headers: fromDevice("local-mp4-1"),
     });
-    await A.req("POST", `/api/interviews/${id}/recordings/${rid}/complete`, { chunkCount: 1, durationMs: 4000 });
+    await A.req("POST", `/api/interviews/${id}/recordings/${rid}/complete`, { chunkCount: 1, durationMs: 4000 }, { headers: fromDevice("local-mp4-1") });
     await app.ctx.jobs.idle();
     const d = await A.req("GET", `/api/interviews/${id}`);
     const rec = d.json.interview.recordings[0];

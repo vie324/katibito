@@ -138,63 +138,81 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     const body = obj(await readJson(c));
     const loginId = loginIdOf(body.loginId);
     if (store.userByLogin(loginId)) throw new HttpError(409, "このログインIDは使われています");
-    const now = new Date().toISOString();
-    const user: UserRecord = {
-      id: newId(),
-      loginId,
-      name: str(body.name, "氏名", { max: 40, min: 1 }),
-      role: oneOf(body.role, "権限", ["admin", "interviewer"] as const),
-      disabled: false,
-      createdAt: now,
-      passwordHash: await hashPassword(password(body.password, "初期パスワード")),
-      passwordChangedAt: now,
-    };
-    store.users.set(user.id, user);
-    await store.saveUsers();
+    const name = str(body.name, "氏名", { max: 40, min: 1 });
+    const role = oneOf(body.role, "権限", ["admin", "interviewer"] as const);
+    const passwordHash = await hashPassword(password(body.password, "初期パスワード"));
+    const user = await store.withLock(USERS_LOCK, async () => {
+      // ハッシュ計算の間に同じログインIDで作られていないか(二重送信)を確かめ直す
+      if (store.userByLogin(loginId)) throw new HttpError(409, "このログインIDは使われています");
+      const now = new Date().toISOString();
+      const user: UserRecord = {
+        id: newId(),
+        loginId,
+        name,
+        role,
+        disabled: false,
+        createdAt: now,
+        passwordHash,
+        passwordChangedAt: now,
+      };
+      store.users.set(user.id, user);
+      await store.saveUsers();
+      return user;
+    });
     await app.audit.write({ userId: c.user!.id, userName: c.user!.name, action: "user_create", interviewId: null, detail: `${user.loginId} (${user.role})`, ip: c.ip });
     return { user: store.publicUser(user) };
   });
 
   r.patch("/api/users/:id", "admin", async (c) => {
     const body = obj(await readJson(c));
-    const user = store.users.get(c.params.id);
-    if (!user) throw new HttpError(404, "ユーザーが見つかりません");
-    const changes: string[] = [];
-    if (body.name !== undefined) {
-      user.name = str(body.name, "氏名", { max: 40, min: 1 });
-      changes.push("name");
-    }
-    if (body.role !== undefined) {
-      const role = oneOf(body.role, "権限", ["admin", "interviewer"] as const);
-      if (role !== "admin" && user.role === "admin" && activeAdmins(app, user.id) === 0) {
+    if (!store.users.has(c.params.id)) throw new HttpError(404, "ユーザーが見つかりません");
+    // すべて検証してから反映する(途中で入力エラーになっても中途半端に変わらないように)
+    const name = body.name === undefined ? undefined : str(body.name, "氏名", { max: 40, min: 1 });
+    const role = body.role === undefined ? undefined : oneOf(body.role, "権限", ["admin", "interviewer"] as const);
+    const disabled = body.disabled === undefined ? undefined : bool(body.disabled, "無効化");
+    const passwordHash =
+      body.password === undefined ? undefined : await hashPassword(password(body.password, "新しいパスワード"));
+
+    const { user, changes } = await store.withLock(USERS_LOCK, async () => {
+      const user = store.users.get(c.params.id);
+      if (!user) throw new HttpError(404, "ユーザーが見つかりません");
+      const willBeAdmin = (role ?? user.role) === "admin" && !(disabled ?? user.disabled);
+      if (user.role === "admin" && !user.disabled && !willBeAdmin && activeAdmins(app, user.id) === 0) {
         throw new HttpError(409, "管理者が1人もいなくなるため変更できません");
       }
-      user.role = role;
-      changes.push(`role=${role}`);
-    }
-    if (body.disabled !== undefined) {
-      const disabled = bool(body.disabled, "無効化");
       if (disabled && user.id === c.user!.id) throw new HttpError(409, "自分自身は無効にできません");
-      if (disabled && user.role === "admin" && activeAdmins(app, user.id) === 0) {
-        throw new HttpError(409, "管理者が1人もいなくなるため無効にできません");
+
+      const changes: string[] = [];
+      if (name !== undefined) {
+        user.name = name;
+        changes.push("name");
       }
-      user.disabled = disabled;
-      if (disabled) app.sessions.destroyUser(user.id);
-      changes.push(disabled ? "disabled" : "enabled");
-    }
-    if (body.password !== undefined) {
-      user.passwordHash = await hashPassword(password(body.password, "新しいパスワード"));
-      user.passwordChangedAt = new Date().toISOString();
-      app.sessions.destroyUser(user.id);
-      changes.push("password");
-    }
-    await store.saveUsers();
+      if (role !== undefined) {
+        user.role = role;
+        changes.push(`role=${role}`);
+      }
+      if (disabled !== undefined) {
+        user.disabled = disabled;
+        changes.push(disabled ? "disabled" : "enabled");
+      }
+      if (passwordHash !== undefined) {
+        user.passwordHash = passwordHash;
+        user.passwordChangedAt = new Date().toISOString();
+        changes.push("password");
+      }
+      await store.saveUsers();
+      if (disabled || passwordHash !== undefined) app.sessions.destroyUser(user.id);
+      return { user, changes };
+    });
     await app.audit.write({ userId: c.user!.id, userName: c.user!.name, action: "user_update", interviewId: null, detail: `${user.loginId}: ${changes.join(", ")}`, ip: c.ip });
     return { user: store.publicUser(user) };
   });
 
   // ---------------------------------------------------------------- 設定
-  r.get("/api/settings", "user", () => ({ settings: store.settings }));
+  // 通知先URL(知っていれば誰でもチャンネルに投稿できる)は管理者にだけ見せる
+  r.get("/api/settings", "user", (c) => ({
+    settings: c.user!.role === "admin" ? store.settings : { ...store.settings, webhookUrl: null },
+  }));
 
   r.put("/api/settings", "admin", async (c) => {
     const body = obj(await readJson(c, 256 * 1024));
@@ -207,6 +225,9 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     return { settings: s };
   });
 }
+
+/** ユーザーの追加・変更を1件ずつ行うためのロック(面接IDと重ならない名前) */
+const USERS_LOCK = "users:";
 
 function activeAdmins(app: AppContext, excludeId: string): number {
   let n = 0;

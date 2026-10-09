@@ -120,4 +120,14 @@ describe("indexWebm", () => {
     writeFileSync(mp4ish, head);
     await expect(indexWebm(mp4ish, path.join(dir, "y.webm"))).rejects.toBeInstanceOf(WebmFormatError);
   });
+
+  it("ファイルが申告する巨大な要素サイズをそのままメモリに読まない", async () => {
+    // EBML ヘッダ + Segment(サイズ不明)+ 8MB と申告する Info(上限 4MB を超える)
+    const ebml = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x87, 0x42, 0x82, 0x84, 0x77, 0x65, 0x62, 0x6d]);
+    const segment = Buffer.from([0x18, 0x53, 0x80, 0x67, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+    const info = Buffer.from([0x15, 0x49, 0xa9, 0x66, 0x01, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00]);
+    const huge = path.join(dir, "huge-info.webm");
+    writeFileSync(huge, Buffer.concat([ebml, segment, info, Buffer.alloc(8 * 1024 * 1024)]));
+    await expect(indexWebm(huge, path.join(dir, "z.webm"))).rejects.toThrow(/大きすぎ/);
+  });
 });

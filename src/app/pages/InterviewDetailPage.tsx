@@ -159,7 +159,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
             <span className="muted">年齢</span> {iv.candidate.age}歳
           </span>
         )}
-        {iv.candidate.minor && <span className="badge">未成年</span>}
+        {(iv.candidate.minor || (iv.candidate.age !== null && iv.candidate.age < 18)) && <span className="badge">未成年</span>}
       </div>
       {iv.candidate.note && <div className="detail-note">{iv.candidate.note}</div>}
 
@@ -177,6 +177,9 @@ export function InterviewDetailPage({ id }: { id: string }) {
           </span>
         ) : (
           <span>録画なし(同意を得られなかったため、録画せずに面接)</span>
+        )}
+        {c?.recording && !c.withdrawnAt && !c.guardianName && (iv.candidate.minor || (iv.candidate.age !== null && iv.candidate.age < 18)) && (
+          <span className="warn-text small">未成年ですが、保護者の同意が記録されていません</span>
         )}
         {c?.withdrawnAt && (
           <span className="warn-text small">

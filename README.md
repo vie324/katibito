@@ -37,6 +37,7 @@ docker compose logs app              # 初期設定コード
 ```bash
 npm test          # 単体・結合テスト(集計・候補者の追跡・WebM 索引付け・サーバー API の全工程・デモのエンジン)
 npm run e2e       # 実ブラウザで運用の全工程(要 npm run build)。スクリーンショットは e2e-out/
+npm run e2e:upload  # 録画の送信の回復(データの欠け・サーバー側の失敗)を実ブラウザで確認
 npm run smoke     # デモ(/demo)のスモークテスト
 npm run typecheck
 ```

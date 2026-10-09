@@ -143,6 +143,20 @@ export function ReviewPanel({
     }
   };
 
+  const reprocess = async () => {
+    if (!rec) return;
+    try {
+      const res = await api.reprocessRecording(iv.id, rec.id);
+      setDetail({
+        ...detail,
+        interview: { ...iv, recordings: iv.recordings.map((r) => (r.id === rec.id ? res.recording : r)) },
+      });
+      toast("再処理を始めました。しばらくしてから画面を開き直してください");
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    }
+  };
+
   const deleteRecording = async () => {
     if (!rec) return;
     const ok = await confirm({
@@ -195,7 +209,16 @@ export function ReviewPanel({
                 : "録画を処理しています。まもなく再生できるようになります。"}
             </Notice>
           )}
-          {rec.status === "failed" && <Notice kind="error">録画の処理に失敗しました: {rec.error ?? "不明なエラー"}</Notice>}
+          {rec.status === "failed" && (
+            <Notice kind="error">
+              録画の処理に失敗しました: {rec.error ?? "不明なエラー"}
+              {user?.role === "admin" && rec.chunkCount !== null && (
+                <button className="small-btn" onClick={() => void reprocess()}>
+                  再処理する
+                </button>
+              )}
+            </Notice>
+          )}
           {rec.status === "purged" && (
             <Notice kind="info">保存期間を過ぎたため、映像と顔の時系列データは削除されています。表情の集計(数値)は残っています。</Notice>
           )}

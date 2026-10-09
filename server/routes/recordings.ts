@@ -1,7 +1,7 @@
 // 録画の API: 作成 → チャンク送信(再開可能)→ 完了 → 結合・索引付け(バックグラウンド)。
 // 顔トラック(表情の計測データ)の受け取りと集計、動画の配信(Range 対応)。
 
-import { mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Marker, RecordingMeta } from "../../src/shared/types";
 import { arr, int, isoDate, obj, oneOf, str, ValidationError } from "../../src/shared/validate";
@@ -10,16 +10,19 @@ import { HANDLED, HttpError, readBinary, readJson, type Router } from "../http";
 import { sendFileRange, servingType } from "../media";
 import { MP4_FILE } from "../transcode";
 import {
+  canReprocess,
   chunkFile,
   chunksDir,
+  decodeTrackGz,
   deleteRecordingFiles,
   finalizeRecording,
   loadSummary,
+  publicRecording,
   receivedChunks,
   recomputeSummary,
-  saveTrack,
   TRACK_FILE,
   videoPath,
+  writeTrack,
 } from "../recordings";
 import { newId } from "../store";
 import { audit, auditView, getInterview } from "./interviews";
@@ -46,6 +49,21 @@ export function parseMarkers(v: unknown): Marker[] {
       label: str(o.label, "マーカーの名前", { max: 100, optional: true }),
     };
   }).sort((a, b) => a.tMs - b.tMs);
+}
+
+/**
+ * 録画した端末(取り込んだ画面)だけが送信を続けられるようにする。
+ * 端末側の録画ID(clientId)は応答に含めないので、合言葉として使える
+ */
+export const CLIENT_ID_HEADER = "x-recording-client-id";
+
+function fromRecordingClient(c: { req: { headers: Record<string, string | string[] | undefined> } }, rec: RecordingMeta): boolean {
+  const v = c.req.headers[CLIENT_ID_HEADER];
+  return typeof v === "string" && v.length > 0 && v === rec.clientId;
+}
+
+function requireRecordingClient(c: Parameters<typeof fromRecordingClient>[0], rec: RecordingMeta): void {
+  if (!fromRecordingClient(c, rec)) throw new HttpError(403, "この録画を送信している端末からのみ送信できます");
 }
 
 function consentAllows(app: AppContext, iid: string, what: "recording" | "analysis"): void {
@@ -77,10 +95,17 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
     return store.withLock(c.params.id, async () => {
       const iv = getInterview(app, c.params.id);
       const existing = iv.recordings.find((rec) => rec.clientId === clientId);
-      if (existing) return { recording: existing, received: await receivedChunks(app, iv.id, existing.id) };
+      if (existing) {
+        return {
+          recording: publicRecording(existing),
+          received: existing.status === "uploading" ? await receivedChunks(app, iv.id, existing.id) : [],
+        };
+      }
       consentAllows(app, iv.id, "recording");
       if (iv.decision) throw new HttpError(409, "判定済みの面接には録画を追加できません");
-      if (iv.recordings.length >= MAX_RECORDINGS) throw new HttpError(409, "録画の数が上限に達しています");
+      if (iv.recordings.filter((x) => x.status !== "deleted").length >= MAX_RECORDINGS) {
+        throw new HttpError(409, "録画の数が上限に達しています。不要な録画を削除してください");
+      }
       const now = new Date().toISOString();
       const rec: RecordingMeta = {
         id: newId(),
@@ -109,22 +134,26 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       await mkdir(chunksDir(app, iv.id, rec.id), { recursive: true });
       await store.saveInterview(iv);
       await audit(app, c, "recording_start", iv.id, `${source} ${mimeType}`);
-      return { recording: rec, received: [] as number[] };
+      return { recording: publicRecording(rec), received: [] as number[] };
     });
   });
 
   r.get("/api/interviews/:id/recordings/:rid", "user", async (c) => {
     const rec = getRecording(app, c.params.id, c.params.rid);
-    return { recording: rec, received: rec.status === "uploading" ? await receivedChunks(app, c.params.id, rec.id) : [] };
+    return {
+      recording: publicRecording(rec),
+      received: rec.status === "uploading" ? await receivedChunks(app, c.params.id, rec.id) : [],
+    };
   });
 
   // ---------------------------------------------------------------- チャンク
   r.put("/api/interviews/:id/recordings/:rid/chunks/:index", "user", async (c) => {
     const index = int(c.params.index, "チャンク番号", { min: 0, max: MAX_CHUNKS - 1 })!;
-    const rec = getRecording(app, c.params.id, c.params.rid);
-    if (rec.status !== "uploading") {
+    const rec0 = getRecording(app, c.params.id, c.params.rid);
+    requireRecordingClient(c, rec0);
+    if (rec0.status !== "uploading") {
       // 完了後の再送(通信が切れて応答を受け取れなかった場合など)は成功扱い
-      if ((rec.status === "processing" || rec.status === "ready") && index < (rec.chunkCount ?? 0)) {
+      if ((rec0.status === "processing" || rec0.status === "ready") && index < (rec0.chunkCount ?? 0)) {
         c.req.resume();
         return { ok: true, already: true };
       }
@@ -132,12 +161,22 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
     }
     const body = await readBinary(c, app.config.maxChunkBytes);
     if (body.length === 0) throw new ValidationError("空のデータです");
-    const file = chunkFile(app, c.params.id, rec.id, index);
-    await mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${newId(4)}.tmp`;
-    await writeFile(tmp, body);
-    await rename(tmp, file);
-    return { ok: true, index, bytes: body.length };
+    // 書き込みはロック内で。受信中に録画・面接が削除されていたら書かない(消したディレクトリを作り直さない)
+    return store.withLock(c.params.id, async () => {
+      const rec = store.interviews.get(c.params.id)?.recordings.find((x) => x.id === c.params.rid);
+      if (!rec || rec.status !== "uploading") throw new HttpError(409, "この録画はアップロードを受け付けていません");
+      const file = chunkFile(app, c.params.id, rec.id, index);
+      const tmp = `${file}.${newId(4)}.tmp`;
+      try {
+        await writeFile(tmp, body);
+        await rename(tmp, file);
+      } catch (e) {
+        await rm(tmp, { force: true }).catch(() => undefined);
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(409, "この録画はアップロードを受け付けていません");
+        throw e;
+      }
+      return { ok: true, index, bytes: body.length };
+    });
   });
 
   // ---------------------------------------------------------------- 完了
@@ -151,6 +190,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
     const rec = await store.withLock(c.params.id, async () => {
       const iv = getInterview(app, c.params.id);
       const rec = getRecording(app, iv.id, c.params.rid);
+      requireRecordingClient(c, rec);
       if (rec.status === "processing" || rec.status === "ready") return rec;
       if (rec.status !== "uploading") throw new HttpError(409, "この録画は完了できません");
       const got = new Set(await receivedChunks(app, iv.id, rec.id));
@@ -169,7 +209,25 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       return rec;
     });
     void app.jobs.run(`finalize:${c.params.id}:${rec.id}`, () => finalizeRecording(app, c.params.id, rec.id));
-    return { recording: rec };
+    return { recording: publicRecording(rec) };
+  });
+
+  // 仕上げに失敗した録画を、受信済みのデータからやり直す(空き容量不足を解消したあと等)
+  r.post("/api/interviews/:id/recordings/:rid/reprocess", "admin", async (c) => {
+    const rec = await store.withLock(c.params.id, async () => {
+      const iv = getInterview(app, c.params.id);
+      const rec = getRecording(app, iv.id, c.params.rid);
+      if (!(await canReprocess(app, iv.id, rec))) {
+        throw new HttpError(409, "受信したデータが残っていないため、この録画は再処理できません");
+      }
+      rec.status = "processing";
+      rec.error = null;
+      await store.saveInterview(iv);
+      await audit(app, c, "recording_reprocess", iv.id, rec.id);
+      return rec;
+    });
+    void app.jobs.run(`finalize:${c.params.id}:${rec.id}`, () => finalizeRecording(app, c.params.id, rec.id));
+    return { recording: publicRecording(rec) };
   });
 
   // ---------------------------------------------------------------- マーカー
@@ -184,29 +242,45 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       await store.saveInterview(iv);
       return rec;
     });
-    const summary = rec.analysis === "ready" ? await recomputeSummary(app, c.params.id, rec) : null;
-    return { recording: rec, summary };
+    const summary = rec.analysis === "ready" ? await recomputeSummary(app, c.params.id, rec.id) : null;
+    return { recording: publicRecording(rec), summary };
   });
 
   // ---------------------------------------------------------------- 顔トラック(表情の計測データ)
+  const TRACK_STATUSES: RecordingMeta["status"][] = ["uploading", "processing", "ready"];
+
   r.put("/api/interviews/:id/recordings/:rid/track", "user", async (c) => {
     consentAllows(app, c.params.id, "analysis");
     const rec0 = getRecording(app, c.params.id, c.params.rid);
-    if (rec0.status === "deleted" || rec0.status === "failed") throw new HttpError(409, "この録画には登録できません");
+    if (!TRACK_STATUSES.includes(rec0.status)) throw new HttpError(409, "この録画には登録できません");
+    // 録画した端末からの送信と、まだ計測していない録画の計測は誰でも。計測し直し(上書き)は管理者のみ
+    if (!fromRecordingClient(c, rec0) && rec0.analysis === "ready" && c.user!.role !== "admin") {
+      throw new HttpError(403, "表情の計測し直しは管理者のみ実行できます");
+    }
     const gz = await readBinary(c, app.config.maxTrackBytes);
+    let track;
+    try {
+      track = decodeTrackGz(gz);
+    } catch (e) {
+      throw new HttpError(400, `表情の計測データを読めません: ${(e as Error).message}`);
+    }
     return store.withLock(c.params.id, async () => {
+      // 受信中に同意の取り消し・録画の削除があれば保存しない
+      consentAllows(app, c.params.id, "analysis");
       const iv = getInterview(app, c.params.id);
       const rec = getRecording(app, iv.id, c.params.rid);
+      if (!TRACK_STATUSES.includes(rec.status)) throw new HttpError(409, "この録画には登録できません");
       let summary;
       try {
-        summary = await saveTrack(app, iv.id, rec, gz);
+        summary = await writeTrack(app, iv.id, rec, gz, track);
       } catch (e) {
-        throw new HttpError(400, `表情の計測データを読めません: ${(e as Error).message}`);
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(409, "この録画には登録できません");
+        throw e;
       }
       rec.analysis = "ready";
       await store.saveInterview(iv);
       await audit(app, c, "analysis_upload", iv.id, `${summary.frameCount} frames`);
-      return { recording: rec, summary };
+      return { recording: publicRecording(rec), summary };
     });
   });
 
@@ -255,7 +329,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       const iv = getInterview(app, c.params.id);
       const rec = getRecording(app, iv.id, c.params.rid);
       if (rec.status !== "uploading") throw new HttpError(409, "送信が完了した録画は取り消せません");
-      if (rec.createdBy !== c.user!.id && c.user!.role !== "admin") {
+      if (!fromRecordingClient(c, rec) && rec.createdBy !== c.user!.id && c.user!.role !== "admin") {
         throw new HttpError(403, "録画した本人か管理者だけが取り消せます");
       }
       await deleteRecordingFiles(app, iv.id, rec, false);
@@ -265,7 +339,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       rec.error = "録画した端末で破棄されました";
       await store.saveInterview(iv);
       await audit(app, c, "recording_abort", iv.id, rec.id);
-      return { recording: rec };
+      return { recording: publicRecording(rec) };
     });
   });
 
@@ -281,7 +355,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
       rec.purgedAt = new Date().toISOString();
       await store.saveInterview(iv);
       await audit(app, c, "recording_delete", iv.id, rec.id);
-      return { recording: rec };
+      return { recording: publicRecording(rec) };
     });
   });
 }

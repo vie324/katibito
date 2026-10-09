@@ -1537,6 +1537,9 @@ tr.clickable:hover td {
   white-space: pre-wrap;
   font-size: 13px;
 }
+.eval-revised {
+  margin-bottom: var(--space-1);
+}
 .tally {
   border: 1px solid var(--rule);
   padding: var(--space-2) var(--space-3);

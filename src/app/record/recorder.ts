@@ -5,7 +5,7 @@ import type { FaceTrack } from "../../analysis/faceTrack";
 import { encodeFaceTrack } from "../../analysis/faceTrack";
 import type { Marker } from "../../shared/types";
 import { gzipBytes, localStore, newLocalId, type LocalRecording } from "./localStore";
-import { memoryChunkKey, memoryChunks, uploader } from "./uploader";
+import { memoryChunkKey, memoryChunks, recordingLockName, uploader } from "./uploader";
 
 export const TIMESLICE_MS = 2000;
 const HEARTBEAT_MS = 5000;
@@ -43,6 +43,7 @@ export class LocalRecorder {
   private readonly markers: Marker[] = [];
   private storageWarning: string | null = null;
   private stopped = false;
+  private releaseLock: (() => void) | null = null;
   onWarning: ((msg: string) => void) | null = null;
 
   constructor(
@@ -79,31 +80,51 @@ export class LocalRecorder {
       doneAt: null,
     };
     await localStore.putRecording(meta);
+    // 録画中であることを別のタブ(送信担当)に知らせる。タブが閉じたり落ちたりすると自動で外れる
+    if (navigator.locks?.request) {
+      void navigator.locks
+        .request(recordingLockName(this.localId), () => new Promise<void>((resolve) => (this.releaseLock = resolve)))
+        .catch(() => undefined);
+    }
 
-    const rec = new MediaRecorder(this.stream, {
-      mimeType,
-      videoBitsPerSecond: this.opts.videoBitsPerSecond,
-      audioBitsPerSecond: 64_000,
-    });
-    this.rec = rec;
-    rec.ondataavailable = (e) => {
-      if (!e.data || e.data.size === 0) return;
-      const i = this.index++;
-      this.bytes += e.data.size;
-      const blob = e.data;
-      this.writes = this.writes.then(() => this.persistChunk(i, blob));
-    };
-    rec.onerror = (e) => {
-      const err = (e as unknown as { error?: Error }).error;
-      this.onWarning?.(`録画でエラーが発生しました: ${err?.message ?? "不明なエラー"}`);
-    };
+    try {
+      const rec = new MediaRecorder(this.stream, {
+        mimeType,
+        videoBitsPerSecond: this.opts.videoBitsPerSecond,
+        audioBitsPerSecond: 64_000,
+      });
+      this.rec = rec;
+      rec.ondataavailable = (e) => {
+        if (!e.data || e.data.size === 0) return;
+        const i = this.index++;
+        this.bytes += e.data.size;
+        const blob = e.data;
+        this.writes = this.writes.then(() => this.persistChunk(i, blob));
+      };
+      rec.onerror = (e) => {
+        const err = (e as unknown as { error?: Error }).error;
+        this.onWarning?.(`録画でエラーが発生しました: ${err?.message ?? "不明なエラー"}`);
+      };
 
-    const started = new Promise<number>((resolve, reject) => {
-      rec.onstart = () => resolve(performance.now());
-      setTimeout(() => reject(new Error("録画を開始できませんでした")), 5000);
-    });
-    rec.start(TIMESLICE_MS);
-    this.startPerf = await started;
+      const started = new Promise<number>((resolve, reject) => {
+        rec.onstart = () => resolve(performance.now());
+        setTimeout(() => reject(new Error("録画を開始できませんでした")), 5000);
+      });
+      rec.start(TIMESLICE_MS);
+      this.startPerf = await started;
+    } catch (e) {
+      // 始められなかった録画は端末内にも残さない(送信待ちに空の録画が残らないように)
+      this.stopped = true;
+      try {
+        if (this.rec && this.rec.state !== "inactive") this.rec.stop();
+      } catch {
+        // 止められなくても続ける
+      }
+      this.releaseLock?.();
+      this.releaseLock = null;
+      await localStore.deleteRecording(this.localId).catch(() => undefined);
+      throw e;
+    }
 
     this.heartbeat = setInterval(() => {
       void localStore
@@ -201,22 +222,28 @@ export class LocalRecorder {
     if (finalTrack && finalTrack.count > 0 && this.opts.analysisAllowed) {
       await this.saveTrack(finalTrack).catch((e) => console.warn("[recorder] 顔トラックを保存できません", e));
     }
-    const saved = await localStore.updateRecording(this.localId, (r) => {
-      r.status = "stopped";
-      r.endedAt = new Date().toISOString();
-      r.durationMs = durationMs;
-      r.markers = [...this.markers];
-      r.chunkCount = Math.max(r.chunkCount, this.index);
-      r.heartbeatAt = Date.now();
-    });
-    uploader.kick();
-    return saved;
+    try {
+      return await localStore.updateRecording(this.localId, (r) => {
+        r.status = "stopped";
+        r.endedAt = new Date().toISOString();
+        r.durationMs = durationMs;
+        r.markers = [...this.markers];
+        r.chunkCount = Math.max(r.chunkCount, this.index);
+        r.heartbeatAt = Date.now();
+      });
+    } finally {
+      this.releaseLock?.();
+      this.releaseLock = null;
+      uploader.kick();
+    }
   }
 
   /** 録画を破棄する(開始直後のやり直しなど) */
   async discard(): Promise<void> {
     this.stopped = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
+    this.releaseLock?.();
+    this.releaseLock = null;
     const rec = this.rec;
     if (rec && rec.state !== "inactive") {
       rec.ondataavailable = null;

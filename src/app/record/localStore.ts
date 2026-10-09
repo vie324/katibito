@@ -33,6 +33,12 @@ export type LocalRecording = {
   /** ブラウザが落ちた録画を回収したもの */
   recovered: boolean;
   doneAt: number | null;
+  /** 端末にもサーバーにもないチャンクの番号(送信できない。手前までで完了するか破棄する) */
+  missingChunk?: number | null;
+  /** サーバー側で失敗扱いになっている(新しい録画として送り直せる) */
+  serverFailed?: boolean;
+  /** 送り直した回数。サーバー上の録画ID(clientId)を変えるのに使う */
+  uploadAttempt?: number;
 };
 
 const DB_NAME = "katibito-local";

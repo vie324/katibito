@@ -113,6 +113,8 @@ export class LoginLimiter {
     private readonly maxPerAccount = 8,
     private readonly maxPerIp = 30,
     private readonly windowMs = 15 * 60_000,
+    /** 接続元を変えながらの総当たり対策: 1つのログインIDへの失敗は、接続元にかかわらずこの回数まで */
+    private readonly maxPerAccountAllIps = 30,
   ) {}
 
   private bump(key: string): void {
@@ -129,12 +131,27 @@ export class LoginLimiter {
   }
 
   blocked(ip: string, loginId: string): boolean {
-    return this.count(`a:${ip}|${loginId.toLowerCase()}`) >= this.maxPerAccount || this.count(`i:${ip}`) >= this.maxPerIp;
+    const id = loginId.toLowerCase();
+    return (
+      this.count(`a:${ip}|${id}`) >= this.maxPerAccount ||
+      this.count(`i:${ip}`) >= this.maxPerIp ||
+      this.count(`u:${id}`) >= this.maxPerAccountAllIps
+    );
   }
 
   fail(ip: string, loginId: string): void {
-    this.bump(`a:${ip}|${loginId.toLowerCase()}`);
+    const id = loginId.toLowerCase();
+    this.bump(`a:${ip}|${id}`);
     this.bump(`i:${ip}`);
+    this.bump(`u:${id}`);
+    this.prune();
+  }
+
+  /** 期限切れの記録を捨てる(ランダムなIDで失敗を繰り返されてもメモリが増え続けないように) */
+  private prune(): void {
+    if (this.fails.size < 10_000) return;
+    const now = Date.now();
+    for (const [k, e] of this.fails) if (e.resetAt <= now) this.fails.delete(k);
   }
 
   succeed(ip: string, loginId: string): void {

@@ -38,9 +38,10 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  opts: { raw?: BodyInit; contentType?: string; signal?: AbortSignal; timeoutMs?: number } = {},
+  opts: { raw?: BodyInit; contentType?: string; signal?: AbortSignal; timeoutMs?: number; clientId?: string } = {},
 ): Promise<T> {
   const headers: Record<string, string> = { "X-Requested-With": "katibito" };
+  if (opts.clientId) headers["X-Recording-Client-Id"] = opts.clientId;
   let payload: BodyInit | undefined;
   if (opts.raw !== undefined) {
     payload = opts.raw;
@@ -164,28 +165,38 @@ export const api = {
   ) => request<{ recording: RecordingMeta; received: number[] }>("POST", `${iv(id)}/recordings`, b),
   recording: (id: string, rid: string) =>
     request<{ recording: RecordingMeta; received: number[] }>("GET", recPath(id, rid)),
-  putChunk: (id: string, rid: string, index: number, data: Blob, signal?: AbortSignal) =>
+  // 録画の送信は、録画を作った端末の録画ID(clientId)を合言葉として添える
+  putChunk: (id: string, rid: string, clientId: string, index: number, data: Blob, signal?: AbortSignal) =>
     request<{ ok: true }>("PUT", `${recPath(id, rid)}/chunks/${index}`, undefined, {
       raw: data,
       signal,
       timeoutMs: 5 * 60_000,
+      clientId,
     }),
-  completeRecording: (id: string, rid: string, b: { chunkCount: number; durationMs: number | null; endedAt: string; markers: Marker[] }) =>
-    request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/complete`, b),
+  completeRecording: (
+    id: string,
+    rid: string,
+    clientId: string,
+    b: { chunkCount: number; durationMs: number | null; endedAt: string; markers: Marker[] },
+  ) => request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/complete`, b, { clientId }),
   putMarkers: (id: string, rid: string, markers: Marker[]) =>
     request<{ recording: RecordingMeta; summary: ExpressionSummary | null }>("PUT", `${recPath(id, rid)}/markers`, { markers }),
-  putTrack: (id: string, rid: string, gz: Blob) =>
+  putTrack: (id: string, rid: string, gz: Blob, clientId?: string) =>
     request<{ recording: RecordingMeta; summary: ExpressionSummary }>("PUT", `${recPath(id, rid)}/track`, undefined, {
       raw: gz,
       contentType: "application/gzip",
       timeoutMs: 5 * 60_000,
+      clientId,
     }),
   trackGz: (id: string, rid: string) => request<ArrayBuffer>("GET", `${recPath(id, rid)}/track`),
   summary: (id: string, rid: string) => request<{ summary: ExpressionSummary }>("GET", `${recPath(id, rid)}/summary`),
   deleteRecording: (id: string, rid: string) => request<{ recording: RecordingMeta }>("DELETE", recPath(id, rid)),
   videoUrl: (id: string, rid: string) => `${recPath(id, rid)}/video`,
   mp4Url: (id: string, rid: string) => `${recPath(id, rid)}/video?format=mp4`,
-  abortRecording: (id: string, rid: string) => request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/abort`, {}),
+  abortRecording: (id: string, rid: string, clientId?: string) =>
+    request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/abort`, {}, { clientId }),
+  reprocessRecording: (id: string, rid: string) =>
+    request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/reprocess`, {}),
 
   stats: () => request<ExpressionStats>("GET", "/api/stats/expression"),
   audit: (limit = 300) => request<{ entries: AuditEntry[] }>("GET", `/api/audit?limit=${limit}`),

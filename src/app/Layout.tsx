@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { api } from "./api";
 import { Link, useRouter } from "./router";
+import { TIMESLICE_MS } from "./record/recorder";
 import { uploader, type UploadState } from "./record/uploader";
 import { useSession } from "./session";
 import { ProgressBar } from "./ui";
@@ -107,6 +108,35 @@ export function UploadRow({ u }: { u: UploadState }) {
           <button className="quiet" onClick={() => void uploader.retry(u.localId)}>
             再試行
           </button>
+          {u.missingChunk !== null && u.missingChunk > 0 && (
+            <button
+              className="quiet"
+              onClick={() => {
+                const min = Math.max(1, Math.round((u.missingChunk! * TIMESLICE_MS) / 60_000));
+                if (
+                  window.confirm(
+                    `端末内の録画データの一部が失われています。届いている部分(はじめから約${min}分)だけで録画を完了します。失われた部分より後ろは送れません。よろしいですか?`,
+                  )
+                ) {
+                  void uploader.completePartial(u.localId);
+                }
+              }}
+            >
+              届いている部分で完了
+            </button>
+          )}
+          {u.canResend && (
+            <button
+              className="quiet"
+              onClick={() => {
+                if (window.confirm("この端末に残っている録画を、新しい録画として最初から送り直します。よろしいですか?")) {
+                  void uploader.resend(u.localId);
+                }
+              }}
+            >
+              送り直す
+            </button>
+          )}
           <button
             className="quiet danger-text"
             onClick={() => {

@@ -117,7 +117,10 @@ export type RecordingStatus =
 
 export type RecordingMeta = {
   id: string;
-  /** 端末側の録画ID。再送しても重複作成しないためのキー */
+  /**
+   * 端末側の録画ID。再送しても重複作成しないためのキーで、送信の合言葉も兼ねる
+   * (チャンク・完了の送信に必要)。サーバーからの応答では空文字
+   */
   clientId: string;
   source: "live" | "file";
   status: RecordingStatus;
@@ -213,7 +216,13 @@ export type Evaluation = {
   comment: string;
   status: "draft" | "submitted";
   updatedAt: string;
+  /** 最初に提出した日時(提出後に修正しても変わらない) */
   submittedAt: string | null;
+  /** 提出後に内容を変更した回数と、最後に変更した日時 */
+  revisions?: number;
+  revisedAt?: string | null;
+  /** ほかの評価者の評価が見える状態で修正したことがある(非公開ルールのもとでの修正の透明性のため) */
+  revisedWhileOthersVisible?: boolean;
 };
 
 export type Note = {

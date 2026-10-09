@@ -26,10 +26,12 @@ ENV NODE_ENV=production \
 COPY --from=build /app/package.json ./
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
-RUN mkdir -p /data && chown node:node /data
-USER node
+COPY scripts/docker-entrypoint.sh /usr/local/bin/katibito-entrypoint
+RUN chmod +x /usr/local/bin/katibito-entrypoint && mkdir -p /data && chown node:node /data
 VOLUME ["/data"]
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# 起動時にデータの保存先の所有者を整えてから、node ユーザー(root ではない)でアプリを動かす
+ENTRYPOINT ["katibito-entrypoint"]
 CMD ["node", "dist-server/main.js"]

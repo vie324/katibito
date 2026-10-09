@@ -15,6 +15,7 @@
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "e2e": "node scripts/e2e.mjs",
+    "e2e:upload": "node scripts/e2e-upload.mjs",
     "typecheck": "tsc --noEmit",
     "generate:sample": "vite-node scripts/generate-sample.ts"
   },

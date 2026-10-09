@@ -99,22 +99,20 @@ async function transcodeOne(ctx: AppContext, bin: string, iid: string, rid: stri
       // 長くても録画時間の3倍 + 5分で打ち切る
       durationMin * 3 * 60_000 + 5 * 60_000,
     );
-    // 変換中に録画が削除されていないか確認してから置く
-    const latest = ctx.store.interviews.get(iid)?.recordings.find((r) => r.id === rid);
-    if (!latest || latest.status !== "ready") {
-      await rm(tmp, { force: true });
-      return;
-    }
-    await rename(tmp, path.join(dir, MP4_FILE));
-    const size = (await stat(path.join(dir, MP4_FILE))).size;
-    await ctx.store.withLock(iid, async () => {
+    // 変換中に録画が削除・保存期間切れになっていないか、ロック内で確かめてから置く
+    const size = await ctx.store.withLock(iid, async () => {
       const cur = ctx.store.interviews.get(iid);
       const r = cur?.recordings.find((x) => x.id === rid);
-      if (!cur || !r || r.status !== "ready") return;
+      if (!cur || !r || r.status !== "ready") {
+        await rm(tmp, { force: true });
+        return null;
+      }
+      await rename(tmp, path.join(dir, MP4_FILE));
       r.mp4Ready = true;
       await ctx.store.saveInterview(cur);
+      return (await stat(path.join(dir, MP4_FILE))).size;
     });
-    console.log(`[transcode] ${iid}/${rid}: 再生用 MP4 を作成しました (${Math.round(size / 1024 / 1024)}MB)`);
+    if (size !== null) console.log(`[transcode] ${iid}/${rid}: 再生用 MP4 を作成しました (${Math.round(size / 1024 / 1024)}MB)`);
   } catch (e) {
     await rm(tmp, { force: true }).catch(() => undefined);
     console.warn(`[transcode] ${iid}/${rid}: MP4 を作成できませんでした`, (e as Error).message);

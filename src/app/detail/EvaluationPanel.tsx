@@ -305,6 +305,12 @@ export function EvaluationCard({
           <VoteChip vote={e.vote} />
         </div>
       )}
+      {(e.revisions ?? 0) > 0 && (
+        <div className={`eval-revised small ${e.revisedWhileOthersVisible ? "warn-text" : "muted"}`}>
+          提出後に修正あり({e.revisions}回、最終 {formatDateTime(e.revisedAt ?? e.updatedAt)})
+          {e.revisedWhileOthersVisible ? "。ほかの評価者の評価が見える状態での修正を含みます" : ""}
+        </div>
+      )}
       <table className="eval-table">
         <tbody>
           {criteria.map((c) => {
@@ -385,6 +391,12 @@ export function Tally({ evaluations, criteria }: { evaluations: Evaluation[]; cr
           })}
         </tbody>
       </table>
+      {submitted.some((e) => e.revisedWhileOthersVisible) && (
+        <div className="small warn-text">
+          提出後に、ほかの評価者の評価が見える状態で修正された評価が{" "}
+          {submitted.filter((e) => e.revisedWhileOthersVisible).length} 件あります(各評価の表示を確認してください)
+        </div>
+      )}
     </div>
   );
 }

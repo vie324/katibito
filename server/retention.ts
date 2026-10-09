@@ -36,9 +36,11 @@ export async function runRetention(ctx: AppContext, now = Date.now()): Promise<R
           continue;
         }
         if (rec.status !== "ready" && rec.status !== "failed") continue;
+        // 起点はサーバーが受け付けた時刻。録画開始時刻は端末の時計・動画ファイルの日時なので使わない
+        // (時計のずれた端末や古い動画の取り込みで、評価前に消えてしまわないように)
         const limit = iv.decision
           ? Date.parse(iv.decision.decidedAt) + videoDaysAfterDecision * DAY
-          : Date.parse(rec.startedAt) + videoDaysUndecided * DAY;
+          : Date.parse(rec.createdAt) + videoDaysUndecided * DAY;
         if (!(now > limit)) continue;
         await deleteRecordingFiles(ctx, iv.id, rec, true);
         rec.status = "purged";
