@@ -1,4 +1,5 @@
 // 画面の振り分け。/demo は従来の行動シグナル解析デモ(ログイン不要・サーバー不要)。
+// API サーバーがない静的ホスティングで開かれた場合は、どのパスでもデモを出す。
 
 import { lazy, Suspense, useEffect } from "react";
 import { Layout } from "./Layout";
@@ -45,7 +46,7 @@ function RootInner() {
 
 function AppRoutes() {
   const { path, navigate } = useRouter();
-  const { info, user, loading, error } = useSession();
+  const { info, user, loading, error, noServer } = useSession();
 
   // 送信待ちの録画があれば、どの画面からでも送信を続ける
   useEffect(() => {
@@ -62,6 +63,14 @@ function AppRoutes() {
   }, [loading, info, user, path, navigate]);
 
   if (loading) return <Loading label="起動中" />;
+  // API サーバーのない静的ホスティング(Vercel 等)では、運用画面の代わりにデモを出す
+  if (noServer) {
+    return (
+      <Suspense fallback={<Loading />}>
+        <DemoApp />
+      </Suspense>
+    );
+  }
   if (error && !info) {
     return (
       <div className="center-page">

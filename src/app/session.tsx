@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo, Settings, UserPublic } from "../shared/types";
-import { api, onUnauthorized } from "./api";
+import { api, ApiError, onUnauthorized } from "./api";
 import { uploader } from "./record/uploader";
 
 type SessionValue = {
@@ -10,6 +10,8 @@ type SessionValue = {
   user: UserPublic | null;
   loading: boolean;
   error: string | null;
+  /** API サーバーがない(静的ホスティングでの公開)。運用画面は使えないのでデモを出す */
+  noServer: boolean;
   refresh: () => Promise<SessionInfo | null>;
   setUser: (u: UserPublic | null) => void;
   settings: Settings | null;
@@ -24,6 +26,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<SessionInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [noServer, setNoServer] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [users, setUsers] = useState<UserPublic[]>([]);
   const infoRef = useRef(info);
@@ -32,10 +35,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const s = await api.session();
+      // 静的ホスティングが index.html などを返した場合(JSON のセッション情報ではない)
+      if (!s || typeof s !== "object" || typeof (s as Partial<SessionInfo>).needsSetup !== "boolean") {
+        setNoServer(true);
+        return null;
+      }
       setInfo(s);
       setError(null);
       return s;
     } catch (e) {
+      // /api/session はこのアプリのサーバーなら必ずある。404 は API サーバーがない(静的ホスティング)
+      if (e instanceof ApiError && e.status === 404) setNoServer(true);
       setError((e as Error).message);
       return null;
     } finally {
@@ -101,6 +111,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         user: info?.user ?? null,
         loading,
         error,
+        noServer,
         refresh,
         setUser,
         settings,
