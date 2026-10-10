@@ -24,6 +24,8 @@
 | 開示・引き継ぎ | 候補者のデータの ZIP 書き出し | `server/zip.ts`, `server/routes/export.ts` |
 | 不正なログインを防ぎたい | 2段階認証(TOTP)・管理者への必須化 | `server/totp.ts`, `server/routes/account.ts` |
 | スマートフォンで使いたい | PWA(manifest・アイコン・オフライン時の案内だけのサービスワーカー) | `public/manifest.webmanifest`, `public/sw.js` |
+| まとめて登録したい | CSV・タブ区切り(UTF-8 / Shift_JIS)を画面で確かめてから一括登録。1行でも誤りがあれば登録しない | `src/app/components/BulkImport.tsx`, `src/app/csv.ts` |
+| ディスクの空きを知りたい | 使用状況(種類ごとの大きさ・空き容量)と警告 | `server/storage.ts` |
 
 ## 1. データ
 
@@ -130,5 +132,6 @@
 | `tests/totp.test.ts` | RFC 6238 の試験値・使い回し・予備のコード・ログインの2段目・必須化・解除 |
 | `tests/transcribe.test.ts` | whisper の出力の読み取り(実際の文字起こしは環境変数があるときだけ) |
 | `tests/ics.test.ts` | .ics の時刻・特殊文字・折り返し |
+| `tests/bulk-storage.test.ts` | 表の読み取り(CSV・タブ・Shift_JIS・日時)・まとめて登録・ディスクの使用状況 |
 
 `npm run e2e` では、ライブ視聴(映像が進む)・場面のメモ・面接室へのメッセージも実ブラウザで確かめる。
