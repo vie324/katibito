@@ -3,7 +3,8 @@
 import type { ExpressionSummary } from "../analysis/expression";
 import type {
   AuditEntry,
-  ExpressionStats,
+  CompareRow,
+  ExpressionCompare,
   InterviewDetail,
   InterviewListItem,
   LiveInfo,
@@ -11,6 +12,7 @@ import type {
   Note,
   NotesView,
   QuestionPlan,
+  RaterStats,
   RecordingMeta,
   SessionInfo,
   Settings,
@@ -217,7 +219,11 @@ export const api = {
   reprocessRecording: (id: string, rid: string) =>
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/reprocess`, {}),
 
-  stats: () => request<ExpressionStats>("GET", "/api/stats/expression"),
+  expressionCompare: (id: string) => request<ExpressionCompare>("GET", `${iv(id)}/expression-compare`),
+  compare: () => request<{ rows: CompareRow[] }>("GET", "/api/compare"),
+  raterStats: () => request<{ raters: RaterStats[] }>("GET", "/api/stats/raters"),
+  /** 指定した面接だけの CSV(管理者) */
+  exportCsv: (ids: string[]) => request<ArrayBuffer>("POST", "/api/export/interviews.csv", { ids }, { timeoutMs: 120_000 }),
   transcriptionStatus: () => request<{ status: TranscriptionStatus }>("GET", "/api/admin/transcription"),
   prepareTranscription: () => request<{ status: TranscriptionStatus }>("POST", "/api/admin/transcription/prepare", {}),
   audit: (limit = 300) => request<{ entries: AuditEntry[] }>("GET", `/api/audit?limit=${limit}`),

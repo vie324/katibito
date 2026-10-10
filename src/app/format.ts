@@ -32,6 +32,12 @@ export function formatTime(iso: string | null | undefined): string {
   return d.toLocaleTimeString("ja-JP", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
 }
 
+/** 日本時間での日付(YYYY-MM-DD)。日付での絞り込み・予定表の日の区切りに使う */
+export function jstDateKey(t: string | Date): string {
+  const ms = typeof t === "string" ? Date.parse(t) : t.getTime();
+  return new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
+}
+
 /** 経過時間 m:ss / h:mm:ss */
 export function formatClock(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";

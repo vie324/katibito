@@ -214,8 +214,8 @@ describe("削除・同意の取り消しと送信の競合", () => {
     expect((await admin.req("POST", `/api/interviews/${iid}/consent/withdraw`, { scope: "all" })).status).toBe(200);
     expect((await up.finish()).status).toBe(403);
     expect(existsSync(path.join(dataDir, "interviews", iid, "recordings", rec.id))).toBe(false);
-    const stats = await bob.req("GET", "/api/stats/expression");
-    expect(stats.json.items.some((x: { interviewId: string }) => x.interviewId === iid)).toBe(false);
+    const cmp = await bob.req("GET", "/api/compare");
+    expect(cmp.json.rows.find((x: { id: string }) => x.id === iid).expression).toBeNull();
   });
 
   it("チャンクの受信中に面接が削除されたら、ディレクトリを作り直さない", async () => {

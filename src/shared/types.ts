@@ -305,6 +305,8 @@ export type InterviewListItem = {
   /** 提出済みの評価の重み付き平均点(1〜5)。非公開中は null */
   score: number | null;
   templateName: string;
+  /** 質問の時間の目安の合計(分) */
+  plannedMinutes: number | null;
   decision: Decision | null;
 };
 
@@ -389,9 +391,68 @@ export type InterviewDetail = {
 // 統計・監査
 // ---------------------------------------------------------------------------
 
-export type ExpressionStats = {
-  /** 解析済みの面接(1面接 = 顔が最も長く映っていた録画1本) */
-  items: { interviewId: string; values: Record<string, number | null> }[];
+/**
+ * 表情の指標の分布(これまでの面接。1面接 = 顔が最も長く映っていた録画1本)。
+ * どの面接の値かは分からないよう、指標ごとに並べ替えた値だけを返す。件数が minN 未満なら値は返さない
+ */
+export type MetricDistribution = { n: number; values: Record<string, number[]> };
+
+export type ExpressionCompare = {
+  minN: number;
+  /** この候補者(ほかの回の面接を含む)を除いた、これまでのすべての面接 */
+  all: MetricDistribution;
+  /** 同じ年代の面接(年齢が未入力なら null) */
+  band: (MetricDistribution & { label: string }) | null;
+};
+
+/** 候補者の比較一覧の1行 */
+export type CompareRow = {
+  id: string;
+  candidate: Pick<Candidate, "displayName" | "kana" | "age" | "minor">;
+  applicantId: string;
+  round: string;
+  scheduledAt: string | null;
+  createdAt: string;
+  templateId: string | null;
+  templateName: string;
+  interviewerIds: string[];
+  status: InterviewStatus;
+  decision: Vote | null;
+  submittedCount: number;
+  expectedCount: number;
+  /** 評価の非公開のルールで、ほかの人の評価が見えるか */
+  visible: boolean;
+  votes: Record<Vote, number> | null;
+  /** 重み付き合計点の平均(1〜5)。非公開中は null */
+  score: number | null;
+  passLine: number | null;
+  /** 評価項目ごとの平均。非公開中は null */
+  criteria: { label: string; weight: number; avg: number | null }[] | null;
+  /** 表情の計測(代表の録画の全体値)。計測なし・信頼度が低いときは null */
+  expression: Record<string, number | null> | null;
+};
+
+/** 面接官ごとの評価の傾向 */
+export type RaterStats = {
+  userId: string;
+  name: string;
+  /** 提出した評価の数 */
+  submitted: number;
+  /** 自分の合計点の平均 */
+  meanScore: number | null;
+  /** ほかの面接官も評価した面接の数(差の計算に使えた数) */
+  panelCount: number;
+  /** ほかの面接官の平均点との差の平均(プラスなら高めにつける傾向) */
+  meanDiff: number | null;
+  /** 差の大きさ(絶対値)の平均 */
+  meanAbsDiff: number | null;
+  votes: Record<Vote, number>;
+  /** 判定が出た面接で、自分の票が判定と同じだった数 */
+  decisionAgreement: { n: number; agree: number };
+  /** 評価項目(名前ごと)の、ほかの面接官との差の平均 */
+  criteria: { label: string; n: number; meanDiff: number }[];
+  /** 面接(録画の開始、なければ予定日時)から評価の提出までの時間の中央値(時間) */
+  medianSubmitHours: number | null;
 };
 
 export type AuditEntry = {

@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { pickRepresentative, type ExpressionSummary } from "../../analysis/expression";
-import type { ExpressionStats, InterviewDetail } from "../../shared/types";
+import type { ExpressionCompare, InterviewDetail } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { DecisionPanel } from "../detail/DecisionPanel";
 import { EvaluationPanel } from "../detail/EvaluationPanel";
 import { LivePanel } from "../detail/LivePanel";
 import { ReviewPanel } from "../detail/ReviewPanel";
+import { saveFile } from "../download";
 import { formatDateTime } from "../format";
+import { buildIcs, interviewEvent } from "../ics";
 import { Link, useRouter } from "../router";
 import { useSession } from "../session";
 import { Loading, Modal, Notice, StatusChip, useConfirm, useToast, VoteChip } from "../ui";
@@ -44,12 +46,12 @@ function OtherRounds({ detail }: { detail: InterviewDetail }) {
 }
 
 export function InterviewDetailPage({ id }: { id: string }) {
-  const { user } = useSession();
+  const { user, info } = useSession();
   const { navigate } = useRouter();
   const toast = useToast();
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState<ExpressionStats | null>(null);
+  const [compare, setCompare] = useState<ExpressionCompare | null>(null);
   const [summary, setSummary] = useState<ExpressionSummary | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -61,9 +63,10 @@ export function InterviewDetailPage({ id }: { id: string }) {
       .interview(id)
       .then((d) => alive && setDetail(d))
       .catch((e) => alive && setError(errorMessage(e)));
+    setCompare(null);
     api
-      .stats()
-      .then((s) => alive && setStats(s))
+      .expressionCompare(id)
+      .then((s) => alive && setCompare(s))
       .catch(() => undefined);
     return () => {
       alive = false;
@@ -115,6 +118,17 @@ export function InterviewDetailPage({ id }: { id: string }) {
   const c = iv.consent;
   const decided = !!iv.decision;
   const isAdmin = user?.role === "admin";
+
+  const saveIcs = () => {
+    const planned = iv.questionMinutes.filter((m): m is number => typeof m === "number");
+    const ev = interviewEvent(
+      { ...iv, plannedMinutes: planned.length > 0 ? planned.reduce((a, b) => a + b, 0) : null },
+      { orgName: info?.orgName ?? "", interviewerNames: detail.interviewers.map((u) => u.name) },
+    );
+    if (!ev) return;
+    const name = iv.candidate.displayName.replace(/[\\/:*?"<>|]/g, "_");
+    saveFile(buildIcs([ev], "面接の予定"), `面接_${name}.ics`, "text/calendar;charset=utf-8");
+  };
   const activeRecs = iv.recordings.filter((r) => r.status !== "deleted");
   const liveRec = iv.recordings.find((r) => r.live);
   // ほかの端末で録画中のときは、録画の開始ボタンを出さない(同じ面接を2台で録らないように)
@@ -195,6 +209,11 @@ export function InterviewDetailPage({ id }: { id: string }) {
       <div className="detail-info">
         <span>
           <span className="muted">面接日時</span> {formatDateTime(iv.scheduledAt)}
+          {iv.scheduledAt && !decided && (
+            <button className="small-btn" title="カレンダーアプリに取り込めるファイル(.ics)を保存します" onClick={saveIcs}>
+              カレンダーに追加
+            </button>
+          )}
         </span>
         {iv.templateName && (
           <span>
@@ -259,7 +278,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <div className="detail-main">
           {liveRec && <LivePanel detail={detail} setDetail={setDetail} rec={liveRec} />}
           {activeRecs.length > 0 ? (
-            <ReviewPanel detail={detail} setDetail={setDetail} stats={stats} />
+            <ReviewPanel detail={detail} setDetail={setDetail} compare={compare} />
           ) : (
             <section className="panel pad empty-review">
               {iv.recordingDeclined ? (

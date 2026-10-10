@@ -504,3 +504,284 @@
   position: relative;
   overflow: hidden;
 }
+
+/* ---------------------------------------------------------------- 切り替えボタン(表情の比較の相手など) */
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+}
+.seg button {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--rule);
+  color: var(--ink-dim);
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.seg button:first-child {
+  border-left: none;
+}
+.seg button.active {
+  color: var(--signal-e);
+  background: rgba(79, 179, 165, 0.08);
+}
+.seg button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.compare-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+/* ---------------------------------------------------------------- 比較 */
+
+.compare-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--space-3);
+}
+.compare-filters > label:not(.check) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.compare-filters select,
+.compare-filters input:not([type="checkbox"]) {
+  padding: 5px 8px;
+}
+.compare-filters .range {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.compare-filters .grow {
+  min-width: 180px;
+}
+.compare-filters .check {
+  margin-bottom: 6px;
+}
+.compare-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: var(--space-2);
+}
+.compare-hidden-note {
+  margin-bottom: var(--space-2);
+}
+table.list th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+table.list th.sortable:hover,
+table.list th.sorted {
+  color: var(--ink);
+}
+.sort-mark {
+  margin-left: 4px;
+  font-size: 9px;
+  color: var(--signal-a);
+}
+table.list td.center {
+  text-align: center;
+}
+/* 項目の列が増えても、候補者名は折り返さない */
+.compare-table td:first-child {
+  white-space: nowrap;
+}
+.score-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.score-bar-value {
+  width: 28px;
+  text-align: right;
+}
+.score-bar-track {
+  position: relative;
+  width: 72px;
+  height: 6px;
+  background: var(--panel-raised);
+  border: 1px solid var(--rule);
+}
+.score-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--ink-dim);
+}
+.score-bar-fill.ok {
+  background: var(--ok);
+}
+.score-bar-line {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--signal-a);
+}
+.rater-intro {
+  max-width: 820px;
+  margin: 0 0 var(--space-3);
+  line-height: 1.7;
+}
+.rater-table tr.me td {
+  background: rgba(79, 179, 165, 0.05);
+}
+.rater-table .vote + .vote {
+  margin-left: 4px;
+}
+.diff-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.diff-track {
+  position: relative;
+  width: 96px;
+  height: 8px;
+  background: var(--panel-raised);
+  border: 1px solid var(--rule);
+}
+.diff-mid {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--ink-faint);
+}
+.diff-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.diff-fill.plus {
+  background: var(--ok);
+}
+.diff-fill.minus {
+  background: var(--signal-a);
+}
+
+/* ---------------------------------------------------------------- 予定(週) */
+
+.cal-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.cal-range {
+  margin-left: var(--space-2);
+  font-size: 14px;
+}
+.cal-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border: 1px solid var(--rule);
+  border-right: none;
+  margin-bottom: var(--space-4);
+}
+.cal-day {
+  border-right: 1px solid var(--rule);
+  min-height: 180px;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.cal-day.weekend {
+  background: rgba(255, 255, 255, 0.015);
+}
+.cal-day.past .cal-item {
+  opacity: 0.7;
+}
+.cal-day.today {
+  background: rgba(232, 163, 61, 0.05);
+}
+.cal-day-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--ink-dim);
+  font-size: 12px;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--rule);
+}
+.cal-day.today .cal-day-head {
+  color: var(--signal-a);
+}
+.cal-dow {
+  font-weight: 700;
+}
+.cal-today {
+  font-size: 10px;
+  border: 1px solid var(--signal-a);
+  padding: 0 4px;
+}
+.cal-empty {
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+.cal-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--ink-faint);
+  background: var(--panel-raised);
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.cal-item:hover {
+  text-decoration: none;
+  border-color: var(--ink-dim);
+}
+.cal-item.mine {
+  border-left-color: var(--signal-a);
+}
+.cal-time {
+  font-size: 12px;
+}
+.cal-name {
+  font-weight: 700;
+}
+.cal-status {
+  margin-top: 2px;
+}
+.today-panel {
+  margin-bottom: var(--space-4);
+  border-color: rgba(79, 179, 165, 0.45);
+}
+.today-panel .todo-row {
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .cal-week {
+    grid-template-columns: 1fr;
+    border-right: 1px solid var(--rule);
+  }
+  .cal-day {
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+    min-height: 0;
+  }
+}

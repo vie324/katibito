@@ -43,6 +43,12 @@ export function Layout({ children }: { children: ReactNode }) {
           <Link to="/" className={path === "/" ? "active" : ""}>
             面接一覧
           </Link>
+          <Link to="/calendar" className={path === "/calendar" ? "active" : ""}>
+            予定
+          </Link>
+          <Link to="/compare" className={path === "/compare" ? "active" : ""}>
+            比較
+          </Link>
           {user?.role === "admin" && (
             <Link to="/settings" className={path === "/settings" ? "active" : ""}>
               設定

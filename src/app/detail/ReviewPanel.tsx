@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ExpressionSummary } from "../../analysis/expression";
 import { decodeFaceTrack, encodeFaceTrack, typicalStepMs, type FaceTrack } from "../../analysis/faceTrack";
 import { buildTimelineSeries, type TimelineSeries } from "../../analysis/series";
-import type { ExpressionStats, InterviewDetail, Marker, RecordingMeta } from "../../shared/types";
+import type { ExpressionCompare, InterviewDetail, Marker, RecordingMeta } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { formatBytes, formatClock, formatDateTime, formatDuration } from "../format";
 import { FaceAnalysisRunner } from "../record/FaceAnalysisRunner";
@@ -32,11 +32,11 @@ type SideTab = "scenes" | "segments" | "transcript" | "notes" | "marks";
 export function ReviewPanel({
   detail,
   setDetail,
-  stats,
+  compare,
 }: {
   detail: InterviewDetail;
   setDetail: (d: InterviewDetail) => void;
-  stats: ExpressionStats | null;
+  compare: ExpressionCompare | null;
 }) {
   const { user, info, settings } = useSession();
   const { search } = useRouter();
@@ -378,7 +378,7 @@ export function ReviewPanel({
           )}
 
           {analysisError && <Notice kind="error">表情の計測結果を読み込めません: {analysisError}</Notice>}
-          {summary && <ExpressionSummaryView summary={summary} stats={stats} interviewId={iv.id} />}
+          {summary && <ExpressionSummaryView summary={summary} compare={compare} />}
 
           {!iv.consent?.analysis && (
             <Notice kind="info">表情の計測には同意を得ていないため、この録画は計測していません。</Notice>

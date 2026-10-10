@@ -183,8 +183,15 @@ export function listItem(app: AppContext, iv: Interview, user: UserRecord): Inte
     votes: vis.visible ? tallyVotes(evals) : null,
     score: vis.visible ? averageScore(iv.criteria, evals) : null,
     templateName: iv.templateName,
+    plannedMinutes: plannedMinutes(iv),
     decision: iv.decision,
   };
+}
+
+/** 質問の時間の目安の合計(分)。目安が1つもなければ null */
+export function plannedMinutes(iv: Pick<Interview, "questionMinutes">): number | null {
+  const xs = iv.questionMinutes.filter((m): m is number => typeof m === "number");
+  return xs.length > 0 ? xs.reduce((a, b) => a + b, 0) : null;
 }
 
 // ---------------------------------------------------------------------------

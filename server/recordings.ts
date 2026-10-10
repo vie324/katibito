@@ -3,7 +3,7 @@
 import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import { computeExpressionSummary, type ExpressionSummary } from "../src/analysis/expression";
+import { computeExpressionSummary, pickRepresentative, type ExpressionSummary } from "../src/analysis/expression";
 import { decodeFaceTrack, type FaceTrack } from "../src/analysis/faceTrack";
 import { INTERVIEW_ANALYSIS } from "../src/config/scoring";
 import type { Interview, LiveInfo, RecordingMeta } from "../src/shared/types";
@@ -278,6 +278,19 @@ export async function loadSummary(
   }
   if (s) cacheOf(ctx).set(key, s);
   return s;
+}
+
+/** 面接の代表の集計(顔が最も長く映っていた録画)。比較・CSV で使う */
+export async function representativeSummary(ctx: AppContext, iid: string): Promise<ExpressionSummary | null> {
+  const iv = ctx.store.interviews.get(iid);
+  if (!iv) return null;
+  const summaries: ExpressionSummary[] = [];
+  for (const rec of iv.recordings) {
+    if (rec.analysis !== "ready") continue;
+    const s = await loadSummary(ctx, iid, rec).catch(() => null);
+    if (s) summaries.push(s);
+  }
+  return pickRepresentative(summaries);
 }
 
 /** 映像と顔トラックを消す。keepSummary = true なら集計(数値)は残す(保存期間による削除) */

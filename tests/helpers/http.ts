@@ -120,10 +120,13 @@ export async function newInterview(c: Client, body: Record<string, unknown> = {}
   const r = await c.req("POST", "/api/interviews", { candidate: { displayName: "テスト" }, ...body });
   if (r.status !== 200) throw new Error(`interview create failed: ${JSON.stringify(r.json)}`);
   const iid = r.json.interview.id as string;
+  const cand = r.json.interview.candidate as { age: number | null; minor: boolean };
   const cr = await c.req("POST", `/api/interviews/${iid}/consent`, {
     recording: true,
     analysis: consent.analysis ?? true,
     candidateName: "テスト",
+    // 未成年は保護者の同意が必要
+    ...(cand.minor || (cand.age !== null && cand.age < 18) ? { guardianName: "テスト 保護者", guardianRelation: "母" } : {}),
     method: "paper",
     consentText: "紙の同意書で取得(本文は別紙)",
   });

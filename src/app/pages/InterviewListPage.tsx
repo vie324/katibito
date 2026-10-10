@@ -5,7 +5,7 @@ import { formatScore } from "../../shared/score";
 import { STATUS_LABEL } from "../../shared/status";
 import type { InterviewListItem, InterviewStatus } from "../../shared/types";
 import { api, errorMessage } from "../api";
-import { formatDateTime, formatDuration } from "../format";
+import { formatDateTime, formatDuration, formatTime, jstDateKey } from "../format";
 import { Link, useRouter } from "../router";
 import { useSession } from "../session";
 import { Empty, Loading, Notice, StatusChip, VoteChip } from "../ui";
@@ -50,6 +50,14 @@ export function InterviewListPage() {
     });
   }, [items, user]);
 
+  // 今日(日本時間)の面接。当日に録画・ライブ視聴へすぐ進めるように上に出す
+  const today = useMemo(() => {
+    const key = jstDateKey(new Date());
+    return (items ?? [])
+      .filter((it) => it.scheduledAt && jstDateKey(it.scheduledAt) === key)
+      .sort((a, b) => a.scheduledAt!.localeCompare(b.scheduledAt!));
+  }, [items]);
+
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: 0, scheduled: 0, uploading: 0, evaluating: 0, deciding: 0, decided: 0 };
     for (const it of items ?? []) {
@@ -82,6 +90,27 @@ export function InterviewListPage() {
 
       {error && <Notice kind="error">{error}</Notice>}
       {!items && !error && <Loading />}
+
+      {today.length > 0 && (
+        <div className="panel today-panel">
+          <div className="panel-title">今日の面接</div>
+          {today.map((it) => (
+            <Link key={it.id} to={`/interviews/${it.id}`} className="todo-row">
+              <span className="num">{formatTime(it.scheduledAt)}</span>
+              <span className="todo-name">{it.candidate.displayName}</span>
+              <span className="muted small">{[it.round, it.location].filter(Boolean).join(" ・ ")}</span>
+              <span className="spacer" />
+              {it.live ? (
+                <span className="chip chip-live">● ライブ</span>
+              ) : it.decision ? (
+                <VoteChip vote={it.decision.result} />
+              ) : (
+                <StatusChip status={it.status} />
+              )}
+            </Link>
+          ))}
+        </div>
+      )}
 
       {todo.length > 0 && (
         <div className="panel todo">

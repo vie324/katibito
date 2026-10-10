@@ -1,29 +1,16 @@
 // 管理系 API: 表情指標の比較用統計、操作ログ、CSV 出力、保存期間処理の手動実行。
 
-import { pickRepresentative } from "../../src/analysis/expression";
 import { COMPARABLE_METRICS, formatMetric, METRIC_META, QUALITY_LABEL } from "../../src/analysis/metricsMeta";
 import { averageScore, criterionAverages } from "../../src/shared/score";
 import { deriveStatus, STATUS_LABEL, submittedEvaluations, tallyVotes, VOTE_LABEL } from "../../src/shared/status";
-import type { ExpressionStats } from "../../src/shared/types";
-import { int } from "../../src/shared/validate";
+import type { Interview } from "../../src/shared/types";
+import { arr, id, int, obj } from "../../src/shared/validate";
 import type { AppContext } from "../context";
-import { attachmentHeader, HANDLED, HttpError, type Router } from "../http";
+import { attachmentHeader, HANDLED, HttpError, readJson, type Ctx, type Router } from "../http";
 import { ensureModels, transcriptionStatus } from "../transcribe";
-import { loadSummary } from "../recordings";
+import { representativeSummary } from "../recordings";
 import { runRetention } from "../retention";
 import { audit } from "./interviews";
-
-async function representativeSummary(app: AppContext, iid: string) {
-  const iv = app.store.interviews.get(iid);
-  if (!iv) return null;
-  const summaries = [];
-  for (const rec of iv.recordings) {
-    if (rec.analysis !== "ready") continue;
-    const s = await loadSummary(app, iid, rec).catch(() => null);
-    if (s) summaries.push(s);
-  }
-  return pickRepresentative(summaries);
-}
 
 function csvCell(v: unknown): string {
   const s = v === null || v === undefined ? "" : String(v);
@@ -39,19 +26,6 @@ function jst(iso: string | null): string {
 
 export function registerAdminRoutes(r: Router, app: AppContext): void {
   const { store } = app;
-
-  r.get("/api/stats/expression", "user", async (): Promise<ExpressionStats> => {
-    const items: ExpressionStats["items"] = [];
-    for (const iid of store.interviews.keys()) {
-      const s = await representativeSummary(app, iid);
-      // 品質「低」の計測は比較の母集団に入れない
-      if (!s || s.quality.level === "low") continue;
-      const values: Record<string, number | null> = {};
-      for (const k of COMPARABLE_METRICS) values[k] = s.overall[k];
-      items.push({ interviewId: iid, values });
-    }
-    return { items };
-  });
 
   r.get("/api/admin/transcription", "admin", async () => ({ status: await transcriptionStatus(app) }));
 
@@ -75,10 +49,19 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
     return res;
   });
 
-  r.get("/api/export/interviews.csv", "admin", async (c) => {
-    const ivs = [...store.interviews.values()].sort((a, b) =>
-      (a.scheduledAt ?? a.createdAt).localeCompare(b.scheduledAt ?? b.createdAt),
-    );
+  // すべての面接
+  r.get("/api/export/interviews.csv", "admin", async (c) => sendCsv(c, [...store.interviews.values()], "面接一覧"));
+
+  // 比較一覧で絞り込んだ面接だけ(ID の一覧を本文で受け取る。URL に収まらない件数もあるため)
+  r.post("/api/export/interviews.csv", "admin", async (c) => {
+    const body = obj(await readJson(c, 256 * 1024));
+    const ids = arr(body.ids, "面接", 5000, (x) => id(x, "面接"));
+    const ivs = ids.map((x) => store.interviews.get(x)).filter((iv): iv is Interview => !!iv);
+    return sendCsv(c, ivs, "面接比較");
+  });
+
+  async function sendCsv(c: Ctx, list: Interview[], name: string) {
+    const ivs = [...new Set(list)].sort((a, b) => (a.scheduledAt ?? a.createdAt).localeCompare(b.scheduledAt ?? b.createdAt));
     // 評価シートごとに項目が違うため、項目名ごとに列を作る(同じ名前の項目は同じ列)
     const labels: string[] = [];
     for (const iv of ivs) for (const cr of iv.criteria) if (!labels.includes(cr.label)) labels.push(cr.label);
@@ -140,10 +123,10 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
     await audit(app, c, "export_csv", null, `${ivs.length} rows`);
     c.res.statusCode = 200;
     c.res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    c.res.setHeader("Content-Disposition", attachmentHeader(`面接一覧_${new Date().toISOString().slice(0, 10)}.csv`));
+    c.res.setHeader("Content-Disposition", attachmentHeader(`${name}_${new Date().toISOString().slice(0, 10)}.csv`));
     c.res.setHeader("Cache-Control", "no-store");
     c.res.setHeader("Content-Length", body.length);
     c.res.end(body);
     return HANDLED;
-  });
+  }
 }
