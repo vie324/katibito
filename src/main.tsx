@@ -12,3 +12,10 @@ import ReactDOM from "react-dom/client";
 import { Root } from "./app/Root";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(<Root />);
+
+// ホーム画面に追加して使えるように(本番のビルドで、https か localhost のときだけ)
+if (import.meta.env.PROD && "serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
