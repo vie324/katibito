@@ -76,6 +76,8 @@ export type Settings = {
     videoDaysAfterDecision: number;
     /** 判定が出ないまま録画を保管する上限日数 */
     videoDaysUndecided: number;
+    /** 判定確定から応募書類(添付ファイル)を削除するまでの日数 */
+    attachmentDaysAfterDecision: number;
   };
   /** 自分の評価を提出するまで他の評価者の評価・メモを見せない */
   blindEvaluation: boolean;
@@ -139,6 +141,54 @@ export type ConsentRecord = {
   obtainedAt: string;
   withdrawnAt: string | null;
   withdrawnScope: "analysis" | "all" | null;
+  /** オンラインで取得したときの、同意のリンクの ID */
+  linkId?: string | null;
+};
+
+/** 応募書類など、面接に添付したファイル */
+export type AttachmentMime = "application/pdf" | "image/jpeg" | "image/png" | "image/webp";
+
+export type AttachmentMeta = {
+  id: string;
+  /** 元のファイル名 */
+  name: string;
+  /** 願書・作文などの種類(任意) */
+  label: string;
+  mime: AttachmentMime;
+  sizeBytes: number;
+  uploadedBy: string;
+  uploadedByName: string;
+  uploadedAt: string;
+};
+
+/**
+ * 事前のオンライン同意のためのリンク(本人・保護者に送る)。
+ * トークンそのものは作成時に1度だけ返し、サーバーには SHA-256 だけを保存する(応答では空文字)
+ */
+export type ConsentLink = {
+  id: string;
+  tokenHash: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+  revokedAt: string | null;
+};
+
+/** 同意のリンクを開いた人に見せる内容(ログイン不要の画面) */
+export type PublicConsentInfo = {
+  orgName: string;
+  contact: string;
+  candidateName: string;
+  scheduledAt: string | null;
+  location: string;
+  /** 未成年(保護者の同意が必要) */
+  minor: boolean;
+  /** open = 入力できる / done = 同意の記録が済んでいる / expired = 期限切れ / revoked = 取り消し済み */
+  state: "open" | "done" | "expired" | "revoked";
+  expiresAt: string;
+  consent: { title: string; body: string; version: string };
 };
 
 export type MarkerKind = "question" | "bookmark";
@@ -272,6 +322,10 @@ export type Interview = {
   recordingDeclined: boolean;
   recordings: RecordingMeta[];
   decision: Decision | null;
+  /** 応募書類などの添付ファイル */
+  attachments: AttachmentMeta[];
+  /** 事前のオンライン同意のために送ったリンク */
+  consentLinks: ConsentLink[];
 };
 
 export type InterviewStatus =

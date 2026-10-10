@@ -2,8 +2,10 @@
 
 import type { ExpressionSummary } from "../analysis/expression";
 import type {
+  AttachmentMeta,
   AuditEntry,
   CompareRow,
+  ConsentLink,
   ExpressionCompare,
   InterviewDetail,
   InterviewListItem,
@@ -11,6 +13,7 @@ import type {
   Marker,
   Note,
   NotesView,
+  PublicConsentInfo,
   QuestionPlan,
   RaterStats,
   RecordingMeta,
@@ -170,6 +173,25 @@ export const api = {
   deleteNote: (id: string, noteId: string) =>
     request<{ notes: NotesView }>("DELETE", `${iv(id)}/notes/${enc(noteId)}`),
 
+  uploadAttachment: (id: string, file: Blob, name: string, label: string) =>
+    request<{ attachment: AttachmentMeta; attachments: AttachmentMeta[] }>(
+      "POST",
+      `${iv(id)}/attachments?name=${enc(name)}&label=${enc(label)}`,
+      undefined,
+      { raw: file, timeoutMs: 5 * 60_000 },
+    ),
+  attachmentUrl: (id: string, aid: string, download = false) => `${iv(id)}/attachments/${enc(aid)}${download ? "?download=1" : ""}`,
+  deleteAttachment: (id: string, aid: string) =>
+    request<{ attachments: AttachmentMeta[] }>("DELETE", `${iv(id)}/attachments/${enc(aid)}`),
+  createConsentLink: (id: string, days: number) =>
+    request<{ token: string; link: ConsentLink; detail: InterviewDetail }>("POST", `${iv(id)}/consent-links`, { days }),
+  revokeConsentLink: (id: string, lid: string) => request<InterviewDetail>("DELETE", `${iv(id)}/consent-links/${enc(lid)}`),
+  publicConsent: (token: string) => request<PublicConsentInfo>("GET", `/api/public/consent/${enc(token)}`),
+  submitPublicConsent: (
+    token: string,
+    b: { recording: boolean; analysis: boolean; candidateName: string; guardianName: string; guardianRelation: string; consentVersion: string },
+  ) => request<{ ok: true; recording: boolean; analysis: boolean }>("POST", `/api/public/consent/${enc(token)}`, b),
+
   decide: (id: string, result: Vote, reason: string) =>
     request<InterviewDetail>("PUT", `${iv(id)}/decision`, { result, reason }),
   cancelDecision: (id: string) => request<InterviewDetail>("DELETE", `${iv(id)}/decision`),
@@ -227,7 +249,8 @@ export const api = {
   transcriptionStatus: () => request<{ status: TranscriptionStatus }>("GET", "/api/admin/transcription"),
   prepareTranscription: () => request<{ status: TranscriptionStatus }>("POST", "/api/admin/transcription/prepare", {}),
   audit: (limit = 300) => request<{ entries: AuditEntry[] }>("GET", `/api/audit?limit=${limit}`),
-  runRetention: () => request<{ purged: number; staleRemoved: number }>("POST", "/api/admin/retention/run", {}),
+  runRetention: () =>
+    request<{ purged: number; staleRemoved: number; attachmentsPurged: number }>("POST", "/api/admin/retention/run", {}),
   exportCsvUrl: "/api/export/interviews.csv",
 };
 

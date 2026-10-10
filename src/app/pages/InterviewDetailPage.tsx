@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { pickRepresentative, type ExpressionSummary } from "../../analysis/expression";
 import type { ExpressionCompare, InterviewDetail } from "../../shared/types";
 import { api, errorMessage } from "../api";
+import { AttachmentsPanel } from "../detail/AttachmentsPanel";
+import { ConsentLinksPanel } from "../detail/ConsentLinksPanel";
 import { DecisionPanel } from "../detail/DecisionPanel";
 import { EvaluationPanel } from "../detail/EvaluationPanel";
 import { LivePanel } from "../detail/LivePanel";
@@ -246,7 +248,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
           <span>
             録画 <b>あり</b> ・ 表情の計測 <b>{c.analysis ? "あり" : "なし"}</b>
             <span className="muted small">
-              ({c.method === "paper" ? "紙の同意書" : "画面で取得"}・{c.obtainedByName}・{formatDateTime(c.obtainedAt)}
+              ({c.method === "paper" ? "紙の同意書" : c.method === "online" ? `オンラインで入力(${c.obtainedByName} がリンクを送付)` : `画面で取得・${c.obtainedByName}`}・{formatDateTime(c.obtainedAt)}
               {c.guardianName ? `・保護者 ${c.guardianName}${c.guardianRelation ? `(${c.guardianRelation})` : ""}` : ""})
             </span>
           </span>
@@ -274,6 +276,8 @@ export function InterviewDetailPage({ id }: { id: string }) {
         )}
       </div>
 
+      <ConsentLinksPanel detail={detail} setDetail={setDetail} />
+
       <div className="detail-grid">
         <div className="detail-main">
           {liveRec && <LivePanel detail={detail} setDetail={setDetail} rec={liveRec} />}
@@ -297,6 +301,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
         </div>
         <div className="detail-side">
           {detail.otherRounds.length > 0 && <OtherRounds detail={detail} />}
+          <AttachmentsPanel detail={detail} setDetail={setDetail} />
           <EvaluationPanel detail={detail} setDetail={setDetail} />
           <DecisionPanel detail={detail} setDetail={setDetail} summary={summary} />
         </div>

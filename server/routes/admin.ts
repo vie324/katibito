@@ -45,7 +45,7 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
 
   r.post("/api/admin/retention/run", "admin", async (c) => {
     const res = await runRetention(app);
-    await audit(app, c, "retention_run", null, `purged=${res.purged} stale=${res.staleRemoved}`);
+    await audit(app, c, "retention_run", null, `purged=${res.purged} stale=${res.staleRemoved} attachments=${res.attachmentsPurged}`);
     return res;
   });
 

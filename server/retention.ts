@@ -2,20 +2,23 @@
 // - 判定確定から videoDaysAfterDecision 日を過ぎた録画の映像・顔トラックを消す(集計の数値は残す)
 // - 判定が出ないまま videoDaysUndecided 日を過ぎた録画も同様
 // - 完了しなかったアップロード(7日以上放置)は丸ごと消す
+// - 判定確定から attachmentDaysAfterDecision 日を過ぎた応募書類(添付ファイル)を消す
 
+import { deleteAttachments } from "./attachments";
 import type { AppContext } from "./context";
 import { deleteRecordingFiles } from "./recordings";
 
 const DAY = 24 * 3600_000;
 const STALE_UPLOAD_MS = 7 * DAY;
 
-export type RetentionResult = { purged: number; staleRemoved: number };
+export type RetentionResult = { purged: number; staleRemoved: number; attachmentsPurged: number };
 
 export async function runRetention(ctx: AppContext, now = Date.now()): Promise<RetentionResult> {
   const { store } = ctx;
-  const { videoDaysAfterDecision, videoDaysUndecided } = store.settings.retention;
+  const { videoDaysAfterDecision, videoDaysUndecided, attachmentDaysAfterDecision } = store.settings.retention;
   let purged = 0;
   let staleRemoved = 0;
+  let attachmentsPurged = 0;
 
   for (const iid of [...store.interviews.keys()]) {
     await store.withLock(iid, async () => {
@@ -52,19 +55,23 @@ export async function runRetention(ctx: AppContext, now = Date.now()): Promise<R
         purged++;
         changed = true;
       }
+      if (iv.decision && iv.attachments.length > 0 && now > Date.parse(iv.decision.decidedAt) + attachmentDaysAfterDecision * DAY) {
+        attachmentsPurged += await deleteAttachments(ctx, iv);
+        changed = true;
+      }
       if (changed) await store.saveInterview(iv);
     });
   }
 
-  if (purged + staleRemoved > 0) {
+  if (purged + staleRemoved + attachmentsPurged > 0) {
     await ctx.audit.write({
       userId: null,
       userName: "system",
       action: "retention_purge",
       interviewId: null,
-      detail: `purged=${purged} stale=${staleRemoved}`,
+      detail: `purged=${purged} stale=${staleRemoved} attachments=${attachmentsPurged}`,
       ip: null,
     });
   }
-  return { purged, staleRemoved };
+  return { purged, staleRemoved, attachmentsPurged };
 }

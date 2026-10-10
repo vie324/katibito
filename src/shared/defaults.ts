@@ -67,7 +67,7 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     defaultTemplateId: DEFAULT_TEMPLATE_ID,
     ratingLabels: [...DEFAULT_RATING_LABELS],
     consent: { title: DEFAULT_CONSENT_TITLE, body: DEFAULT_CONSENT_BODY },
-    retention: { videoDaysAfterDecision: 90, videoDaysUndecided: 180 },
+    retention: { videoDaysAfterDecision: 90, videoDaysUndecided: 180, attachmentDaysAfterDecision: 365 },
     blindEvaluation: true,
     recording: { videoBitsPerSecond: 1_000_000, width: 1280, height: 720 },
     webhookUrl: null,

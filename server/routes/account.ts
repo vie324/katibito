@@ -319,6 +319,9 @@ export function parseSettings(body: Record<string, unknown>, current: Settings):
     retention: {
       videoDaysAfterDecision: int(retention.videoDaysAfterDecision, "判定後の録画保存日数", { min: 1, max: 3650 })!,
       videoDaysUndecided: int(retention.videoDaysUndecided, "未判定の録画保存日数", { min: 7, max: 3650 })!,
+      attachmentDaysAfterDecision:
+        int(retention.attachmentDaysAfterDecision, "判定後の応募書類の保存日数", { min: 1, max: 3650, optional: true }) ??
+        current.retention.attachmentDaysAfterDecision,
     },
     blindEvaluation: bool(body.blindEvaluation, "評価の非公開設定"),
     recording: {

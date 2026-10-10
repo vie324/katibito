@@ -330,5 +330,7 @@ function normalizeInterview(iv: Interview, settings: Settings): Interview {
     })),
     decision: iv.decision ?? null,
     consent: iv.consent ?? null,
+    attachments: iv.attachments ?? [],
+    consentLinks: iv.consentLinks ?? [],
   };
 }

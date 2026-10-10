@@ -15,6 +15,8 @@ import { ffmpegPath, resumeTranscodes } from "./transcode";
 import { resumeTranscriptions, whisperCli } from "./transcribe";
 import { registerAccountRoutes } from "./routes/account";
 import { registerAdminRoutes } from "./routes/admin";
+import { registerAttachmentRoutes } from "./routes/attachments";
+import { registerConsentLinkRoutes } from "./routes/consentLinks";
 import { registerInsightRoutes } from "./routes/insights";
 import { canView, registerInterviewRoutes } from "./routes/interviews";
 import { registerRecordingRoutes } from "./routes/recordings";
@@ -98,6 +100,8 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
   registerRecordingRoutes(router, ctx);
   registerAdminRoutes(router, ctx);
   registerInsightRoutes(router, ctx);
+  registerAttachmentRoutes(router, ctx);
+  registerConsentLinkRoutes(router, ctx);
 
   const serveStatic = config.staticDir ? createStaticHandler(config.staticDir) : null;
 

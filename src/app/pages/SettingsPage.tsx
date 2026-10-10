@@ -425,6 +425,17 @@ function RetentionTab({ draft, setDraft }: TabProps) {
           onChange={(e) => setDraft({ ...draft, retention: { ...draft.retention, videoDaysUndecided: Number(e.target.value) } })}
         />
       </Field>
+      <Field label="判定が確定してから応募書類(添付ファイル)を消すまでの日数" hint="面接に添付した PDF・画像を削除します">
+        <input
+          type="number"
+          min={1}
+          max={3650}
+          value={draft.retention.attachmentDaysAfterDecision}
+          onChange={(e) =>
+            setDraft({ ...draft, retention: { ...draft.retention, attachmentDaysAfterDecision: Number(e.target.value) } })
+          }
+        />
+      </Field>
       <p className="muted small">削除は6時間ごとに自動で行います。保存した設定ですぐに実行する場合は下のボタンを押してください。</p>
       {error && <Notice kind="error">{error}</Notice>}
       <div className="row-actions left">
@@ -432,7 +443,11 @@ function RetentionTab({ draft, setDraft }: TabProps) {
           disabled={busy}
           onClick={async () => {
             const r = await run(() => api.runRetention());
-            if (r) toast(`期限を過ぎた録画 ${r.purged}件、未完了のアップロード ${r.staleRemoved}件を削除しました`);
+            if (r) {
+              toast(
+                `期限を過ぎた録画 ${r.purged}件、未完了のアップロード ${r.staleRemoved}件、応募書類 ${r.attachmentsPurged}件を削除しました`,
+              );
+            }
           }}
         >
           保存期間の処理をいま実行する

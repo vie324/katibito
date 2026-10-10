@@ -785,3 +785,185 @@ table.list td.center {
     min-height: 0;
   }
 }
+
+/* ---------------------------------------------------------------- 応募書類 */
+
+.attachment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attachment-list li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--rule);
+}
+.attachment-list li:first-child {
+  border-top: none;
+}
+.attachment-thumb {
+  width: 52px;
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rule);
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+.attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pdf-mark {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--bad);
+  letter-spacing: 0.08em;
+}
+.attachment-name {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.attachment-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  border-top: 1px solid var(--rule);
+}
+.attachment-add input {
+  flex: 1;
+  min-width: 160px;
+}
+
+/* ---------------------------------------------------------------- 事前のオンライン同意(担当者側) */
+
+.consent-links {
+  margin-bottom: var(--space-4);
+}
+.consent-links .pad > p {
+  margin-top: 0;
+}
+.consent-links select {
+  width: auto;
+}
+.consent-links .pad > .link-list:first-child {
+  margin-top: 0;
+}
+.link-created {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid rgba(79, 179, 165, 0.45);
+}
+.link-created .qr {
+  flex: none;
+  border: 1px solid var(--rule);
+}
+.link-box {
+  display: flex;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+.link-box input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.link-list {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+}
+.link-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-1) 0;
+}
+.link-state {
+  font-size: 11px;
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  color: var(--ink-dim);
+}
+.link-state.link-open {
+  border-color: var(--signal-a);
+  color: var(--signal-a);
+}
+.link-state.link-used {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* ---------------------------------------------------------------- 事前のオンライン同意(本人・保護者のページ) */
+
+.public-page {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) 64px;
+}
+.public-head {
+  margin-bottom: var(--space-4);
+}
+.public-org {
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+.public-head h1 {
+  font-size: 21px;
+  margin: 4px 0 var(--space-3);
+  letter-spacing: 0.04em;
+}
+.public-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-size: 14px;
+}
+.public-facts dt {
+  color: var(--ink-dim);
+}
+.public-facts dd {
+  margin: 0;
+}
+.public-doc {
+  max-height: none;
+  margin: var(--space-3) 0 var(--space-4);
+  padding: var(--space-4);
+  font-size: 15px;
+}
+.public-form {
+  gap: var(--space-4);
+}
+.public-q {
+  border: 1px solid var(--rule);
+  padding: var(--space-3) var(--space-4);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.public-q legend {
+  padding: 0 var(--space-2);
+  font-weight: 700;
+}
+.public-submit {
+  padding: 12px;
+  font-size: 16px;
+}
+.public-summary {
+  font-size: 15px;
+  line-height: 2;
+}

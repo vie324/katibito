@@ -143,7 +143,12 @@ export function buildDetail(app: AppContext, iv: Interview, user: UserRecord): I
     .filter((u): u is UserRecord => !!u)
     .map((u) => app.store.publicUser(u));
   return {
-    interview: { ...iv, recordings: iv.recordings.map((r) => publicRecording(r, liveInfo(app, iv.id, r))) },
+    interview: {
+      ...iv,
+      recordings: iv.recordings.map((r) => publicRecording(r, liveInfo(app, iv.id, r))),
+      // リンクのトークンのハッシュは返さない
+      consentLinks: iv.consentLinks.map((l) => ({ ...l, tokenHash: "" })),
+    },
     status: deriveStatus(iv, evals),
     otherRounds: otherRounds(app, iv, user),
     interviewers,
@@ -296,6 +301,8 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       recordingDeclined: false,
       recordings: [],
       decision: null,
+      attachments: [],
+      consentLinks: [],
     };
     applyTemplate(iv, template);
     await store.saveInterview(iv);

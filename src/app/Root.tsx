@@ -1,4 +1,5 @@
 // 画面の振り分け。/demo は従来の行動シグナル解析デモ(ログイン不要・サーバー不要)。
+// /c/<トークン> は本人・保護者が事前の同意を入力するページ(ログイン不要)。
 // API サーバーがない静的ホスティングで開かれた場合は、どのパスでもデモを出す。
 
 import { lazy, Suspense, useEffect } from "react";
@@ -21,6 +22,7 @@ const ReportPage = lazy(() => import("./pages/ReportPage"));
 const NoticePage = lazy(() => import("./pages/NoticePage"));
 const ComparePage = lazy(() => import("./pages/ComparePage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
+const PublicConsentPage = lazy(() => import("./pages/PublicConsentPage"));
 
 export function Root() {
   return (
@@ -36,6 +38,15 @@ function RootInner() {
     return (
       <Suspense fallback={<Loading />}>
         <DemoApp />
+      </Suspense>
+    );
+  }
+  // 本人・保護者が開く同意のページ(ログイン不要)
+  const consent = matchPath("/c/:token", path);
+  if (consent) {
+    return (
+      <Suspense fallback={<Loading />}>
+        <PublicConsentPage token={consent.token} />
       </Suspense>
     );
   }

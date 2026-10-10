@@ -51,3 +51,10 @@ export async function notifyLiveStarted(ctx: AppContext, iv: Interview): Promise
     `【面接記録】${iv.candidate.displayName} さんの面接の録画が始まりました。ライブ(数秒遅れ)で見られます。\n${link(ctx, iv)}`,
   );
 }
+
+export async function notifyConsentOnline(ctx: AppContext, iv: Interview, recording: boolean): Promise<void> {
+  await sendWebhook(
+    ctx.store.settings.webhookUrl,
+    `【面接記録】${iv.candidate.displayName} さんの同意がオンラインで届きました(録画${recording ? "に同意" : "には同意なし"})。\n${link(ctx, iv)}`,
+  );
+}

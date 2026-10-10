@@ -557,6 +557,14 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
             {hidePreview && <div className="preview-cover">プレビューを隠しています(録画は続いています)</div>}
             {!cameraReady && !cameraError && <div className="preview-cover">カメラを起動しています</div>}
           </div>
+          {!recording && iv.consent?.method === "online" && (
+            <Notice kind="info">
+              同意は事前にオンラインで入力されています(
+              {iv.consent.guardianName ? `保護者 ${iv.consent.guardianName}` : iv.consent.candidateName}
+              ・録画 {iv.consent.recording ? "同意" : "不同意"}・表情の計測 {iv.consent.analysis ? "同意" : "不同意"})。
+              撮影を始める前に、本人{iv.consent.guardianName ? "・保護者" : ""}に口頭でも確認してください。
+            </Notice>
+          )}
           {lostWarn && <Notice kind="warn">候補者の顔が {Math.round(faceLostMs / 1000)} 秒間映っていません。カメラの向きを確認してください。</Notice>}
           {cameraError && (
             <Notice kind="error">
