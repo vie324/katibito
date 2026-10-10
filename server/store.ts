@@ -130,7 +130,11 @@ export class Store {
       const dir = path.join(this.interviewsDir, entry.name);
       const iv = await readJsonFile<Interview>(path.join(dir, "interview.json"));
       if (!iv) continue;
-      this.interviews.set(iv.id, normalizeInterview(iv, this.settings));
+      const normalized = normalizeInterview(iv, this.settings);
+      this.interviews.set(iv.id, normalized);
+      // v0.2 までの面接は評価項目の写しを持たない。初めて読み込んだときの評価シートの写しを保存して固定する
+      // (保存しないと、起動のたびにその時点の評価シートを写し直し、過去の評価の合計点が変わってしまう)
+      if (!iv.criteria) await writeJsonAtomic(path.join(dir, "interview.json"), normalized);
       const evMap = new Map<string, Evaluation>();
       try {
         for (const f of await readdir(path.join(dir, "evaluations"))) {

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatScore } from "../../shared/score";
-import { STATUS_LABEL } from "../../shared/status";
+import { heldWithoutRecording, STATUS_LABEL } from "../../shared/status";
 import type { InterviewListItem, InterviewStatus } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { formatDateTime, formatDuration, formatTime, jstDateKey } from "../format";
@@ -46,7 +46,7 @@ export function InterviewListPage() {
     if (!items || !user) return [];
     return items.filter((it) => {
       if (it.status === "decided") return false;
-      const material = it.readyRecordingCount > 0 || it.recordingDeclined;
+      const material = it.readyRecordingCount > 0 || heldWithoutRecording(it);
       const assigned = it.interviewerIds.includes(user.id);
       if (assigned && material && it.myEvaluation !== "submitted") return true;
       if (user.role === "admin" && it.status === "deciding") return true;

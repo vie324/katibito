@@ -7,7 +7,7 @@ import { submittedEvaluations } from "../src/shared/status";
 import type { Interview } from "../src/shared/types";
 import type { AppContext } from "./context";
 import { mailEnabled, sendMail } from "./mail";
-import { interviewLink, jstShort, mailRecipients, whoLabel } from "./notifications";
+import { jstShort, mailLink, mailRecipients, whoLabel } from "./notifications";
 import { writeJsonAtomic, type UserRecord } from "./store";
 
 const HOUR = 3600_000;
@@ -36,7 +36,14 @@ async function loadLog(ctx: AppContext): Promise<Log> {
 }
 
 async function saveLog(ctx: AppContext, log: Log, now: number): Promise<void> {
-  for (const [k, e] of Object.entries(log)) if (now - Date.parse(e.lastAt) > KEEP_MS) delete log[k];
+  for (const [k, e] of Object.entries(log)) {
+    if (now - Date.parse(e.lastAt) <= KEEP_MS) continue;
+    // 未判定の面接の催促の記録は残す(消すと回数が数え直しになり、上限を超えて送ってしまう)
+    const m = /^eval:([^:]+):/.exec(k);
+    const iv = m ? ctx.store.interviews.get(m[1]) : undefined;
+    if (iv && !iv.decision) continue;
+    delete log[k];
+  }
   await writeJsonAtomic(path.join(ctx.config.dataDir, LOG_FILE), log);
 }
 
@@ -45,6 +52,8 @@ function sharedAt(iv: Interview): number | null {
   const ready = iv.recordings.filter((r) => r.status === "ready" || r.status === "purged");
   if (ready.length > 0) return Math.max(...ready.map((r) => Date.parse(r.createdAt) + (r.durationMs ?? 0)));
   if (iv.recordingDeclined && iv.consent) {
+    // 事前のオンライン同意で断られた場合、面接の日時が分からなければ催促しない(面接の前に催促してしまうため)
+    if (iv.consent.method === "online" && !iv.scheduledAt) return null;
     return Math.max(Date.parse(iv.consent.obtainedAt), iv.scheduledAt ? Date.parse(iv.scheduledAt) : 0);
   }
   return null;
@@ -60,7 +69,7 @@ function itemLines(ctx: AppContext, iv: Interview, withTime: "date" | "time"): s
       : jstShort(iv.scheduledAt)
     : "";
   const head = `・${when ? `${when} ` : ""}${whoLabel(iv)}${iv.location ? ` ${iv.location}` : ""}`;
-  const link = interviewLink(ctx, iv);
+  const link = mailLink(ctx, iv);
   return link ? `${head}\n  ${link}` : head;
 }
 

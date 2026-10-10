@@ -65,9 +65,11 @@ function AppRoutes() {
   const { info, user, loading, error, noServer } = useSession();
 
   // 送信待ちの録画があれば、どの画面からでも送信を続ける
+  // (2段階認証の設定を求められている間は API を使えないので、設定が済んでから)
+  const mustSetupTotp = info?.mustSetupTotp ?? false;
   useEffect(() => {
-    if (user) void uploader.start();
-  }, [user]);
+    if (user && !mustSetupTotp) void uploader.start();
+  }, [user, mustSetupTotp]);
 
   // 管理者に2段階認証が必須なのに未設定なら、設定する画面へ
   useEffect(() => {

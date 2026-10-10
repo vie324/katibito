@@ -77,17 +77,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  // ログインしたら設定とユーザー一覧を読む
+  // ログインしたら設定とユーザー一覧を読む。2段階認証の設定を求められている間は読めない(403)ので、
+  // 設定が済んで mustSetupTotp が外れたときに読み直す
   const userId = info?.user?.id ?? null;
+  const mustSetupTotp = info?.mustSetupTotp ?? false;
   useEffect(() => {
-    if (!userId) {
+    if (!userId || mustSetupTotp) {
       setSettings(null);
       setUsers([]);
       return;
     }
     void reloadSettings();
     void reloadUsers();
-  }, [userId, reloadSettings, reloadUsers]);
+  }, [userId, mustSetupTotp, reloadSettings, reloadUsers]);
 
   // セッション切れ。録画中はログイン画面に移動させない(録画を止めないため)。
   // 送信は「ログイン待ち」で止まり、録画を終えてからログインし直せば続きを送る

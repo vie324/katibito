@@ -1,7 +1,7 @@
 // 2段階認証(TOTP)のテスト: 計算(RFC 6238 の試験値)と、設定・ログイン・予備のコード・管理者への必須化・解除。
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { base32Decode, base32Encode, hashRecovery, newRecoveryCodes, STEP_MS, totpAt, verifyTotp } from "../server/totp";
+import { base32Decode, base32Encode, hashRecovery, looksLikeRecovery, newRecoveryCodes, STEP_MS, totpAt, verifyTotp } from "../server/totp";
 import type { SessionInfo, UserAccount } from "../src/shared/types";
 import { Client, setupTeam, startServer, type TestServer } from "./helpers/http";
 
@@ -38,6 +38,9 @@ describe("TOTP の計算", () => {
     expect(new Set(codes).size).toBe(10);
     for (const c of codes) expect(c).toMatch(/^[a-hjkmnp-z2-9]{4}-[a-hjkmnp-z2-9]{4}$/);
     expect(hashRecovery(codes[0].toUpperCase().replace("-", " "))).toBe(hashRecovery(codes[0]));
+    // まれに数字だけの予備のコードもできる。確認コード(6桁)とは長さで区別できるので使える
+    expect(looksLikeRecovery("2345-6789")).toBe(true);
+    expect(looksLikeRecovery("123456")).toBe(false);
   });
 });
 
@@ -71,8 +74,11 @@ describe("2段階認証の設定とログイン", () => {
     expect(aliceSecret).toMatch(/^[A-Z2-7]{32}$/);
     expect(setup.json.uri).toBe(`otpauth://totp/${encodeURIComponent("面接記録(テスト塾):alice")}?secret=${aliceSecret}&issuer=${encodeURIComponent("面接記録(テスト塾)")}&algorithm=SHA1&digits=6&period=30`);
 
-    expect((await alice.req("POST", "/api/me/totp/enable", { code: "000000" })).status).toBe(400);
-    const en = await alice.req("POST", "/api/me/totp/enable", { code: totpAt(aliceSecret, cur()) });
+    expect((await alice.req("POST", "/api/me/totp/enable", { code: "000000", password: "password-123" })).status).toBe(400);
+    // パスワードも必要(ログインしたままの端末を使った第三者が登録できないように)
+    expect((await alice.req("POST", "/api/me/totp/enable", { code: totpAt(aliceSecret, cur()) })).status).toBe(400);
+    expect((await alice.req("POST", "/api/me/totp/enable", { code: totpAt(aliceSecret, cur()), password: "wrong-pass-1" })).status).toBe(400);
+    const en = await alice.req("POST", "/api/me/totp/enable", { code: totpAt(aliceSecret, cur()), password: "password-123" });
     expect(en.status).toBe(200);
     aliceRecovery = en.json.recoveryCodes;
     expect(aliceRecovery).toHaveLength(10);
@@ -119,7 +125,7 @@ describe("2段階認証の設定とログイン", () => {
 
   it("確認コードを5回まちがえると、パスワードから入れ直し", async () => {
     const setup = await bob.req("POST", "/api/me/totp/setup", {});
-    expect((await bob.req("POST", "/api/me/totp/enable", { code: totpAt(setup.json.secret, cur()) })).status).toBe(200);
+    expect((await bob.req("POST", "/api/me/totp/enable", { code: totpAt(setup.json.secret, cur()), password: "password-123" })).status).toBe(200);
     const c = fresh();
     const ticket = (await c.login("bob", "password-123")).json.ticket;
     for (let i = 0; i < 4; i++) expect((await c.req("POST", "/api/login/totp", { ticket, code: "000000" })).json.error).toBe("確認コードが違います");
@@ -132,7 +138,7 @@ describe("2段階認証の設定とログイン", () => {
     const on = { ...s, security: { ...s.security, requireTotpForAdmins: true } };
     expect((await admin.req("PUT", "/api/settings", on)).status).toBe(409);
     const setup = await admin.req("POST", "/api/me/totp/setup", {});
-    expect((await admin.req("POST", "/api/me/totp/enable", { code: totpAt(setup.json.secret, cur()) })).status).toBe(200);
+    expect((await admin.req("POST", "/api/me/totp/enable", { code: totpAt(setup.json.secret, cur()), password: "password-123" })).status).toBe(200);
     expect((await admin.req("PUT", "/api/settings", on)).status).toBe(200);
     // 必須のあいだは自分の2段階認証を無効にできない
     expect((await admin.req("POST", "/api/me/totp/disable", { password: "password-123" })).status).toBe(409);
@@ -146,11 +152,25 @@ describe("2段階認証の設定とログイン", () => {
     expect(blocked.json.error).toContain("2段階認証");
     expect((await boss2.req("GET", "/api/me")).status).toBe(200);
     const s2 = await boss2.req("POST", "/api/me/totp/setup", {});
-    expect((await boss2.req("POST", "/api/me/totp/enable", { code: totpAt(s2.json.secret, cur()) })).status).toBe(200);
+    expect((await boss2.req("POST", "/api/me/totp/enable", { code: totpAt(s2.json.secret, cur()), password: "password-456" })).status).toBe(200);
     expect(((await boss2.req("GET", "/api/session")).json as SessionInfo).mustSetupTotp).toBe(false);
     expect((await boss2.req("GET", "/api/interviews")).status).toBe(200);
     // 面接官には必須ではない
     expect(((await fresh().req("GET", "/api/session")).json as SessionInfo).mustSetupTotp).toBe(false);
+  });
+
+  it("確認コードのまちがいは、予備のコードの作り直しとログインの2段目で合わせて数え、続くと止める", async () => {
+    expect((await admin.req("POST", "/api/users", { loginId: "carol", name: "面接官C", role: "interviewer", password: "password-789" })).status).toBe(200);
+    const carol = fresh();
+    await carol.login("carol", "password-789");
+    const st = await carol.req("POST", "/api/me/totp/setup", {});
+    expect((await carol.req("POST", "/api/me/totp/enable", { code: totpAt(st.json.secret, cur()), password: "password-789" })).status).toBe(200);
+    for (let i = 0; i < 10; i++) expect((await carol.req("POST", "/api/me/totp/recovery", { code: "000000" })).status).toBe(400);
+    // 正しいコードでも、しばらくは受け付けない
+    expect((await carol.req("POST", "/api/me/totp/recovery", { code: totpAt(st.json.secret, cur() + 1) })).status).toBe(429);
+    const c = fresh();
+    const ticket = (await c.login("carol", "password-789")).json.ticket;
+    expect((await c.req("POST", "/api/login/totp", { ticket, code: totpAt(st.json.secret, cur() + 1) })).status).toBe(429);
   });
 
   it("管理者はスマートフォンをなくした人の2段階認証を解除できる(その人のログインも解除)", async () => {

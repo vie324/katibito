@@ -43,15 +43,18 @@ export default function PublicConsentPage({ token }: { token: string }) {
   if (!info) return <Loading />;
 
   const contact = info.contact.trim() || "面接の担当者";
+  // 面接の情報は、入力できるリンク(open)のときだけ届く
+  const d = info.details;
   const ready =
+    !!d &&
     recording !== null &&
     (recording === "no" || analysis !== null) &&
     candidateName.trim().length > 0 &&
-    (!info.minor || guardianName.trim().length > 0) &&
+    (!d.minor || guardianName.trim().length > 0) &&
     read;
 
   const submit = async () => {
-    if (!ready) return;
+    if (!ready || !d) return;
     setBusy(true);
     setError(null);
     try {
@@ -61,7 +64,7 @@ export default function PublicConsentPage({ token }: { token: string }) {
         candidateName: candidateName.trim(),
         guardianName: guardianName.trim(),
         guardianRelation: guardianRelation.trim(),
-        consentVersion: info.consent.version,
+        consentVersion: d.consent.version,
       });
       setDone({ recording: r.recording, analysis: r.analysis });
       window.scrollTo(0, 0);
@@ -76,22 +79,24 @@ export default function PublicConsentPage({ token }: { token: string }) {
     <header className="public-head">
       <div className="public-org">{info.orgName}</div>
       <h1>面接の録画についての同意のお願い</h1>
-      <dl className="public-facts">
-        <dt>面接を受ける方</dt>
-        <dd>{info.candidateName} 様</dd>
-        {info.scheduledAt && (
-          <>
-            <dt>面接の日時</dt>
-            <dd>{formatDateTime(info.scheduledAt)}</dd>
-          </>
-        )}
-        {info.location && (
-          <>
-            <dt>場所</dt>
-            <dd>{info.location}</dd>
-          </>
-        )}
-      </dl>
+      {d && (
+        <dl className="public-facts">
+          <dt>面接を受ける方</dt>
+          <dd>{d.candidateName} 様</dd>
+          {d.scheduledAt && (
+            <>
+              <dt>面接の日時</dt>
+              <dd>{formatDateTime(d.scheduledAt)}</dd>
+            </>
+          )}
+          {d.location && (
+            <>
+              <dt>場所</dt>
+              <dd>{d.location}</dd>
+            </>
+          )}
+        </dl>
+      )}
     </header>
   );
 
@@ -112,7 +117,7 @@ export default function PublicConsentPage({ token }: { token: string }) {
     );
   }
 
-  if (info.state !== "open") {
+  if (info.state !== "open" || !d) {
     return (
       <div className="public-page">
         {head}
@@ -137,8 +142,8 @@ export default function PublicConsentPage({ token }: { token: string }) {
       </p>
 
       <div className="consent-doc public-doc">
-        <h2>{info.consent.title}</h2>
-        {info.consent.body.split("\n").map((line, i) => (line.trim() === "" ? <br key={i} /> : <p key={i}>{line}</p>))}
+        <h2>{d.consent.title}</h2>
+        {d.consent.body.split("\n").map((line, i) => (line.trim() === "" ? <br key={i} /> : <p key={i}>{line}</p>))}
       </div>
 
       <div className="public-form form">
@@ -179,7 +184,7 @@ export default function PublicConsentPage({ token }: { token: string }) {
         <Field label="面接を受ける方のお名前" required>
           <input value={candidateName} onChange={(e) => setCandidateName(e.target.value)} maxLength={60} autoComplete="off" />
         </Field>
-        {info.minor && (
+        {d.minor && (
           <>
             <Field label="保護者の方のお名前" required hint="未成年の方は、保護者の方がご回答ください">
               <input value={guardianName} onChange={(e) => setGuardianName(e.target.value)} maxLength={60} autoComplete="name" />
@@ -200,7 +205,7 @@ export default function PublicConsentPage({ token }: { token: string }) {
           {busy ? "送信中…" : "この内容で回答する"}
         </button>
         <p className="muted small">
-          回答の有効期限: {formatDateTime(info.expiresAt)} まで。ご不明な点は {contact} までお問い合わせください。
+          回答の有効期限: {formatDateTime(d.expiresAt)} まで。ご不明な点は {contact} までお問い合わせください。
         </p>
       </div>
     </div>

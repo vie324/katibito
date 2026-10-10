@@ -168,7 +168,7 @@ export function listItem(app: AppContext, iv: Interview, user: UserRecord): Inte
     interviewerIds: iv.interviewerIds,
     createdAt: iv.createdAt,
     status: deriveStatus(iv, evals),
-    consent: iv.consent ? { recording: iv.consent.recording, analysis: iv.consent.analysis } : null,
+    consent: iv.consent ? { recording: iv.consent.recording, analysis: iv.consent.analysis, method: iv.consent.method } : null,
     recordingDeclined: iv.recordingDeclined,
     recordingCount: iv.recordings.filter((r) => r.status !== "deleted").length,
     readyRecordingCount: ready.length,
@@ -572,10 +572,12 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       if (recordingId && !rec) throw new ValidationError("録画が見つかりません");
       let tMs: number | null = null;
       if (rec && body.live === true) {
-        // ライブで見ながらのメモ: 時刻はサーバーが録画の経過時間から決める(端末の時計に頼らない)
         const live = liveInfo(app, iv.id, rec);
         if (!live) throw new HttpError(409, "録画は終わっています。メモは録画の再生画面から追加してください");
-        tMs = live.elapsedMs;
+        // ライブで見ながらのメモ: 見ていた映像の時刻(ライブは数秒遅れるため)。ただし録画の経過時間より先にはしない。
+        // 時刻が送られないとき(映像がまだ出ていない・面接室へのメッセージ)は、サーバーが録画の経過時間から決める
+        const seen = kind === "note" && body.tMs !== null && body.tMs !== undefined ? int(body.tMs, "時刻", { min: 0, max: 24 * 3600_000 }) : null;
+        tMs = seen === null ? live.elapsedMs : Math.min(seen, live.elapsedMs);
       } else if (rec) {
         tMs = int(body.tMs, "時刻", { min: 0, max: 24 * 3600_000 });
       }

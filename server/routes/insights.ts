@@ -197,6 +197,8 @@ export function registerInsightRoutes(r: Router, app: AppContext): void {
     for (const x of store.interviews.values()) {
       // 同じ候補者(ほかの回の面接を含む)とは比べない
       if (x.applicantId === iv.applicantId) continue;
+      // 見られる面接だけで比べる(「担当の面接だけ」のとき、面接ごとの応答の差から見られない面接の値を割り出せないように)
+      if (!canView(app, c.user!, x)) continue;
       const m = await expressionOf(app, x);
       if (!m) continue;
       all.push(m);

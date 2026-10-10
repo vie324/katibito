@@ -205,6 +205,19 @@ describe("評価の催促と前日のお知らせ", () => {
     const logFile = path.join(server.dataDir, "notify-log.json");
     expect(existsSync(logFile)).toBe(true);
     expect(JSON.parse(readFileSync(logFile, "utf8"))[`eval:${a}:${ids.alice}`].count).toBe(3);
+
+    // 古い記録を整理するときも、判定の出ていない面接の催促の記録は残す(回数を数え直して、また送らないように)
+    const c = await newInterview(admin, { candidate: { displayName: "催促3" }, interviewerIds: [ids.alice] });
+    await readyRecording(server, admin, c, "dev-remind-c");
+    const D = 24 * H;
+    expect((await runReminders(server.app.ctx, t0 + 130 * D)).evaluation).toBe(1);
+    expect((await runReminders(server.app.ctx, t0 + 131 * D)).evaluation).toBe(1);
+    const late = to(smtp.mails, "alice@example.jp")
+      .filter((x) => x.subject.includes("評価の入力"))
+      .slice(-2);
+    expect(late.map((x) => x.subject)).toEqual(["【面接記録】評価の入力をお願いします(1件)", "【面接記録】評価の入力をお願いします(1件)"]);
+    expect(late.every((x) => x.text.includes("催促3") && !x.text.includes("催促1"))).toBe(true);
+    expect(JSON.parse(readFileSync(logFile, "utf8"))[`eval:${a}:${ids.alice}`].count).toBe(3);
   });
 
   it("前日の決めた時刻(日本時間)以降に、翌日の担当の面接を知らせる。日時が変われば知らせ直す", async () => {
@@ -242,6 +255,32 @@ describe("評価の催促と前日のお知らせ", () => {
     expect((await admin.req("PUT", "/api/settings", { ...s, reminders: { ...s.reminders, enabled: false } })).status).toBe(200);
     expect((await admin.req("PATCH", `/api/interviews/${iid}`, { scheduledAt: new Date(at(tomorrow, "15:00")).toISOString() })).status).toBe(200);
     expect(await runReminders(server.app.ctx, at(today, "17:50"))).toEqual({ evaluation: 0, dayBefore: 0 });
+  });
+});
+
+describe("APP_URL が未設定のサーバー", () => {
+  it("メールにはアプリへのリンクを載せない(リクエストから推定したアドレスは使わない)", async () => {
+    const smtp = await startSmtp();
+    const server = await startServer({
+      mail: { ...loadConfig({}).mail, host: "127.0.0.1", port: smtp.port, secure: false, requireTls: false, from: "面接記録 <noreply@example.jp>" },
+    });
+    try {
+      const { admin, bob, ids } = await setupTeam(server);
+      await withEmails(admin, bob, ids);
+      const iid = await newInterview(admin, { candidate: { displayName: "リンクなし" }, interviewerIds: [ids.alice, ids.bob] });
+      // ブラウザからの操作(Origin つき)があっても、メールのリンクには使わない
+      expect((await admin.req("PUT", "/api/me/notify", { email: "boss@example.jp" }, { headers: { Origin: server.base } })).status).toBe(200);
+      smtp.mails.length = 0;
+      await readyRecording(server, admin, iid, "dev-nolink");
+      await smtp.waitFor(1);
+      const m = to(smtp.mails, "alice@example.jp")[0];
+      expect(m.subject).toContain("録画が共有されました");
+      expect(m.text).not.toContain("/interviews/");
+      expect(m.text).not.toContain(server.base);
+    } finally {
+      await server.close();
+      await smtp.close();
+    }
   });
 });
 

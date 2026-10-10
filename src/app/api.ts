@@ -148,7 +148,8 @@ export const api = {
     request<{ user: UserPublic; recoveryRemaining: number }>("POST", "/api/login/totp", { ticket, code }),
   totpStatus: () => request<{ enabled: boolean; enabledAt: string | null; recoveryRemaining: number }>("GET", "/api/me/totp"),
   totpSetup: () => request<{ secret: string; uri: string }>("POST", "/api/me/totp/setup", {}),
-  totpEnable: (code: string) => request<{ recoveryCodes: string[] }>("POST", "/api/me/totp/enable", { code }),
+  totpEnable: (code: string, password: string) =>
+    request<{ recoveryCodes: string[] }>("POST", "/api/me/totp/enable", { code, password }),
   totpRecovery: (code: string) => request<{ recoveryCodes: string[] }>("POST", "/api/me/totp/recovery", { code }),
   totpDisable: (password: string) => request<{ ok: true }>("POST", "/api/me/totp/disable", { password }),
   resetUserTotp: (id: string) => request<{ user: UserAccount }>("POST", `/api/users/${enc(id)}/totp/reset`, {}),

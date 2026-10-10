@@ -1,6 +1,6 @@
 // v0.3 の機能の結合テスト: 評価シート(テンプレート)・重み付き合計点・同じ候補者の面接・閲覧範囲 ほか。
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { weightedScore } from "../src/shared/score";
@@ -171,6 +171,21 @@ describe("v0.2 までのデータの移行", () => {
     expect(iv.questionMinutes).toEqual([null]);
     expect(iv.applicantId).toBe("legacyIv01");
     expect(iv.round).toBe("");
+
+    // 初めて読み込んだときの写しは保存され、あとで評価シートを変えても(消しても)変わらない
+    const onDisk = JSON.parse(readFileSync(path.join(dir, "interviews", "legacyIv01", "interview.json"), "utf8"));
+    expect(onDisk.criteria).toEqual([{ id: "old1", label: "旧項目", description: "", weight: 1 }]);
+    writeFileSync(
+      path.join(dir, "settings.json"),
+      JSON.stringify({
+        ...store.settings,
+        templates: [{ id: "other", name: "別のシート", criteria: [{ id: "new1", label: "新項目", description: "", weight: 3 }], questions: [], passLine: null }],
+        defaultTemplateId: "other",
+      }),
+    );
+    const reopened = await Store.open(dir);
+    expect(reopened.interviews.get("legacyIv01")!.criteria).toEqual([{ id: "old1", label: "旧項目", description: "", weight: 1 }]);
+    expect(reopened.interviews.get("legacyIv01")!.templateName).toBe("標準");
   });
 });
 
@@ -210,6 +225,12 @@ describe("閲覧範囲(担当の面接だけ)", () => {
       expect((await alice.req("PUT", `/api/interviews/${others}/evaluations/me`, { ratings: RATINGS, vote: "pass" })).status).toBe(404);
       expect((await alice.req("POST", `/api/interviews/${others}/notes`, { text: "x" })).status).toBe(404);
       expect((await alice.req("POST", `/api/interviews/${others}/recordings`, { clientId: "dev-scope-1", source: "live", mimeType: "video/webm" })).status).toBe(404);
+      // パスの書き方を変えても(// や末尾の /)すり抜けられない
+      expect((await alice.req("GET", `/api//interviews/${others}`)).status).toBe(404);
+      expect((await alice.req("GET", `/api/interviews/${others}/`)).status).toBe(404);
+      expect((await alice.req("GET", `/api/interviews//${others}/expression-compare`)).status).toBe(404);
+      expect((await alice.req("PATCH", `/api//interviews/${others}`, { location: "書き換え" })).status).toBe(404);
+      expect(server.app.ctx.store.interviews.get(others)!.location).not.toBe("書き換え");
       // 自分の担当・管理者は見られる
       expect((await alice.req("GET", `/api/interviews/${mine}`)).status).toBe(200);
       expect((await bob.req("GET", `/api/interviews/${others}`)).status).toBe(200);
@@ -255,6 +276,14 @@ describe("ライブ視聴・面接室へのメッセージ", () => {
     expect(note.status).toBe(200);
     expect(note.json.note.tMs).toBeGreaterThanOrEqual(12_000);
     expect(note.json.note.tMs).toBeLessThan(20_000);
+    // 見ていた映像の時刻(ライブは数秒遅れる)を送れば、その時刻で残る。録画の経過時間より先にはならない
+    const seen = await bob.req("POST", `/api/interviews/${iid}/notes`, { recordingId: rid, live: true, tMs: 7_500, text: "見ていた場面" });
+    expect(seen.json.note.tMs).toBe(7_500);
+    const ahead = await bob.req("POST", `/api/interviews/${iid}/notes`, { recordingId: rid, live: true, tMs: 600_000, text: "先の時刻" });
+    expect(ahead.json.note.tMs).toBeLessThan(20_000);
+    // 面接室へのメッセージは送った時点の経過時間(送られた時刻は使わない)
+    const room = await bob.req("POST", `/api/interviews/${iid}/notes`, { recordingId: rid, live: true, kind: "room", tMs: 0, text: "部活のことを" });
+    expect(room.json.note.tMs).toBeGreaterThanOrEqual(12_000);
 
     // 完了すると録画中ではなくなり、チャンクも取れなくなる
     await alice.req("POST", `/api/interviews/${iid}/recordings/${rid}/complete`, { chunkCount: 1, durationMs: 4000 }, { headers: fromDevice("dev-live-1") });

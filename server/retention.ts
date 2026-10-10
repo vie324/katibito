@@ -2,9 +2,9 @@
 // - 判定確定から videoDaysAfterDecision 日を過ぎた録画の映像・顔トラックを消す(集計の数値は残す)
 // - 判定が出ないまま videoDaysUndecided 日を過ぎた録画も同様
 // - 完了しなかったアップロード(7日以上放置)は丸ごと消す
-// - 判定確定から attachmentDaysAfterDecision 日を過ぎた応募書類(添付ファイル)を消す
+// - 判定確定(判定のあとに添付したものは添付)から attachmentDaysAfterDecision 日を過ぎた応募書類(添付ファイル)を消す
 
-import { deleteAttachments } from "./attachments";
+import { deleteAttachmentsWhere } from "./attachments";
 import type { AppContext } from "./context";
 import { deleteRecordingFiles } from "./recordings";
 
@@ -55,9 +55,18 @@ export async function runRetention(ctx: AppContext, now = Date.now()): Promise<R
         purged++;
         changed = true;
       }
-      if (iv.decision && iv.attachments.length > 0 && now > Date.parse(iv.decision.decidedAt) + attachmentDaysAfterDecision * DAY) {
-        attachmentsPurged += await deleteAttachments(ctx, iv);
-        changed = true;
+      if (iv.decision && iv.attachments.length > 0) {
+        // 起点は判定と添付の遅い方(判定のあとに添付した書類が、すぐに消えないように)
+        const decidedAt = Date.parse(iv.decision.decidedAt);
+        const n = await deleteAttachmentsWhere(
+          ctx,
+          iv,
+          (a) => now > Math.max(decidedAt, Date.parse(a.uploadedAt) || 0) + attachmentDaysAfterDecision * DAY,
+        );
+        if (n > 0) {
+          attachmentsPurged += n;
+          changed = true;
+        }
       }
       if (changed) await store.saveInterview(iv);
     });

@@ -5,6 +5,7 @@ import type { ExpressionSummary, Highlight, SegmentSummary } from "../../analysi
 import { formatMetric } from "../../analysis/metricsMeta";
 import type { Note } from "../../shared/types";
 import { formatClock, formatDateTime } from "../format";
+import { internalPath } from "../links";
 import { Link } from "../router";
 import { useSession } from "../session";
 
@@ -16,19 +17,14 @@ export function NoteText({ text }: { text: string }) {
   return (
     <>
       {parts.map((p, i) => {
-        if (/^https?:\/\//.test(p)) {
-          try {
-            const u = new URL(p);
-            if (u.origin === window.location.origin) {
-              return (
-                <Link key={i} to={u.pathname + u.search}>
-                  {u.searchParams.get("t") ? `場面へのリンク(${formatClock(Number(u.searchParams.get("t")) * 1000)})` : "リンク"}
-                </Link>
-              );
-            }
-          } catch {
-            // URL として読めなければ文字のまま
-          }
+        const to = /^https?:\/\//.test(p) ? internalPath(p, window.location.origin) : null;
+        if (to) {
+          const t = new URLSearchParams(to.split("?")[1] ?? "").get("t");
+          return (
+            <Link key={i} to={to}>
+              {t ? `場面へのリンク(${formatClock(Number(t) * 1000)})` : "リンク"}
+            </Link>
+          );
         }
         return <span key={i}>{p}</span>;
       })}

@@ -61,6 +61,19 @@ function newUserFields(role: Role, email: string): Pick<UserRecord, "email" | "n
   return { email, notify: defaultNotifyPrefs(role), totp: null, totpPending: null };
 }
 
+/** ログイン中の本人の操作で、パスワードを確かめ直す(まちがいはログインの試行制限に数える) */
+async function requirePassword(app: AppContext, c: Ctx, v: unknown): Promise<void> {
+  const me = c.user!;
+  if (app.limiter.blocked(c.ip, me.loginId)) {
+    throw new HttpError(429, "パスワードの失敗が続いたため、一時的にロックしています。15分ほど待ってから再度お試しください");
+  }
+  const pw = typeof v === "string" ? v : "";
+  if (!(await verifyPassword(pw, me.passwordHash))) {
+    app.limiter.fail(c.ip, me.loginId);
+    throw new HttpError(400, "パスワードが違います");
+  }
+}
+
 const TICKET_TTL_MS = 5 * 60_000;
 const TICKET_MAX_ATTEMPTS = 5;
 
@@ -169,6 +182,9 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     if (app.limiter.blocked(c.ip, user.loginId)) {
       throw new HttpError(429, "ログインの失敗が続いたため、一時的にロックしています。15分ほど待ってから再度お試しください");
     }
+    if (app.totpLimiter.blocked(c.ip, user.loginId)) {
+      throw new HttpError(429, "確認コードの失敗が続いたため、一時的にロックしています。しばらく待ってから再度お試しください");
+    }
     const result = await store.withLock(USERS_LOCK, async () => {
       const u = store.users.get(user.id);
       if (!u?.totp) return null;
@@ -193,6 +209,7 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
       ticket.attempts++;
       if (ticket.attempts >= TICKET_MAX_ATTEMPTS) app.loginTickets.delete(ticketId);
       app.limiter.fail(c.ip, user.loginId);
+      app.totpLimiter.fail(c.ip, user.loginId);
       await app.audit.write({ userId: user.id, userName: user.name, action: "login_failed", interviewId: null, detail: "2段階認証", ip: c.ip });
       throw new HttpError(401, ticket.attempts >= TICKET_MAX_ATTEMPTS ? "確認コードが違います。もう一度ログインしてください" : "確認コードが違います");
     }
@@ -245,6 +262,8 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
   r.post("/api/me/totp/enable", "user", async (c) => {
     const body = obj(await readJson(c));
     const code = str(body.code, "確認コード", { max: 20, min: 1 });
+    // ログインしたままの端末を使った第三者が、自分の認証アプリを登録できないように、パスワードも確かめる
+    await requirePassword(app, c, body.password);
     const codes = newRecoveryCodes();
     await store.withLock(USERS_LOCK, async () => {
       const u = store.users.get(c.user!.id)!;
@@ -269,12 +288,19 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
   r.post("/api/me/totp/recovery", "user", async (c) => {
     const body = obj(await readJson(c));
     const code = str(body.code, "確認コード", { max: 20, min: 1 });
+    const me = c.user!;
+    if (app.totpLimiter.blocked(c.ip, me.loginId)) {
+      throw new HttpError(429, "確認コードの失敗が続いたため、一時的にロックしています。しばらく待ってから再度お試しください");
+    }
     const codes = newRecoveryCodes();
     await store.withLock(USERS_LOCK, async () => {
-      const u = store.users.get(c.user!.id)!;
+      const u = store.users.get(me.id)!;
       if (!u.totp) throw new HttpError(409, "2段階認証が有効ではありません");
       const step = verifyTotp(u.totp.secret, code, u.totp.lastStep);
-      if (step === null) throw new HttpError(400, "確認コードが違います");
+      if (step === null) {
+        app.totpLimiter.fail(c.ip, me.loginId);
+        throw new HttpError(400, "確認コードが違います");
+      }
       u.totp.lastStep = step;
       u.totp.recovery = codes.map(hashRecovery);
       await store.saveUsers();
@@ -285,9 +311,8 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
 
   r.post("/api/me/totp/disable", "user", async (c) => {
     const body = obj(await readJson(c));
-    const pw = typeof body.password === "string" ? body.password : "";
     const me = c.user!;
-    if (!(await verifyPassword(pw, me.passwordHash))) throw new HttpError(400, "パスワードが違います");
+    await requirePassword(app, c, body.password);
     if (me.role === "admin" && store.settings.security.requireTotpForAdmins) {
       throw new HttpError(409, "管理者は2段階認証が必須の設定のため、無効にできません");
     }

@@ -93,6 +93,7 @@ export function hashRecovery(code: string): string {
   return createHash("sha256").update(`katibito-recovery:${normalizeRecovery(code)}`).digest("hex");
 }
 
+/** 予備のコードの形か(確認コードは6桁なので、8文字なら数字だけでも予備のコードとして扱う) */
 export function looksLikeRecovery(code: string): boolean {
-  return /^[a-z0-9]{8}$/.test(normalizeRecovery(code)) && !/^\d+$/.test(normalizeRecovery(code));
+  return /^[a-z0-9]{8}$/.test(normalizeRecovery(code));
 }

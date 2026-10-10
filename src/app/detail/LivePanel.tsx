@@ -2,7 +2,7 @@
 // Media Source Extensions でそのまま再生する。途中から見るときは、録画の先頭(初期化部分)に
 // 最新に近い Cluster の先頭からつなぐ。見ながら、録画の時刻つきのメモと、面接室へのメッセージを送れる。
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { InterviewDetail, RecordingMeta } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { formatClock } from "../format";
@@ -40,9 +40,8 @@ function lastContiguous(received: number[]): number {
   return i;
 }
 
-function LivePlayer({ iid, rec }: { iid: string; rec: RecordingMeta }) {
+function LivePlayer({ iid, rec, videoRef }: { iid: string; rec: RecordingMeta; videoRef: MutableRefObject<HTMLVideoElement | null> }) {
   const { user, settings } = useSession();
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [phase, setPhase] = useState<Phase>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -222,6 +221,7 @@ export function LivePanel({ detail, setDetail, rec }: { detail: InterviewDetail;
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(rec.live?.elapsedMs ?? 0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // 経過時間はサーバーの値から手元で進める
   useEffect(() => {
@@ -237,7 +237,11 @@ export function LivePanel({ detail, setDetail, rec }: { detail: InterviewDetail;
     if (!text) return;
     setBusy(true);
     try {
-      const res = await api.addNote(iv.id, { recordingId: rec.id, tMs: null, text, kind, live: true });
+      // メモは、いま見ている映像の時刻で残す(ライブは数秒遅れるため。録画のタイムコードは録画の先頭から数える)
+      const v = videoRef.current;
+      const seen =
+        kind === "note" && v && v.readyState >= 2 && Number.isFinite(v.currentTime) ? Math.round(v.currentTime * 1000) : null;
+      const res = await api.addNote(iv.id, { recordingId: rec.id, tMs: seen, text, kind, live: true });
       setDetail({ ...detail, notes: res.notes });
       if (kind === "note") {
         setNote("");
@@ -262,7 +266,7 @@ export function LivePanel({ detail, setDetail, rec }: { detail: InterviewDetail;
         {rec.live?.question && <span className="live-q">いまの質問: {rec.live.question}</span>}
       </div>
       <div className="pad live-grid">
-        <LivePlayer iid={iv.id} rec={rec} />
+        <LivePlayer iid={iv.id} rec={rec} videoRef={videoRef} />
         <div className="live-side">
           <div className="form compact">
             <span className="field-label">見ながらメモ</span>

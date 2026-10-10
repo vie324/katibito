@@ -97,6 +97,13 @@ describe("表情の指標の分布(これまでの面接・同じ年代)", () =>
       // 比較一覧にも出ない
       expect((await rowsOf(alice)).some((r) => r.id === other)).toBe(false);
       expect((await rowsOf(bob)).some((r) => r.id === other)).toBe(true);
+      // 分布にも、見られない面接の値は入れない(応答の差から、見られない面接の値を割り出せないように)
+      const hidden = await measured(11, { interviewerIds: [ids.bob] });
+      const forAlice = await compareOf(alice, target);
+      const forBob = await compareOf(bob, target);
+      expect(forBob.all.n).toBe(forAlice.all.n + 1);
+      expect(forBob.band!.n).toBe(forAlice.band!.n + 1);
+      expect((await alice.req("GET", `/api/interviews/${hidden}/expression-compare`)).status).toBe(404);
     } finally {
       const s2 = (await admin.req("GET", "/api/settings")).json.settings;
       await admin.req("PUT", "/api/settings", { ...s2, access: { interviewerScope: "all" } });

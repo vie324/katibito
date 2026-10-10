@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { AttachmentMeta, InterviewDetail, PublicConsentInfo } from "../src/shared/types";
+import type { AttachmentMeta, InterviewDetail, InterviewListItem, PublicConsentInfo } from "../src/shared/types";
 import { runRetention } from "../server/retention";
 import { Client, newInterview, setupTeam, startServer, type TestServer } from "./helpers/http";
 
@@ -121,6 +121,23 @@ describe("応募書類の添付", () => {
     expect(d.interview.attachments).toEqual([]);
     expect(existsSync(path.join(server.dataDir, "interviews", iid, "attachments"))).toBe(false);
   });
+
+  it("判定のあとに添付した書類は、添付した日から保存期間を数える", async () => {
+    const iid = await plainInterview();
+    const before = (await upload(alice, iid, PDF, "before.pdf")).json.attachment as AttachmentMeta;
+    expect((await admin.req("PUT", `/api/interviews/${iid}/decision`, { result: "pass", reason: "" })).status).toBe(200);
+    const days = 365;
+    // 判定から日数がたってから添付した、という状態にする(添付の日時を後ろにずらす)
+    const later = (await upload(alice, iid, PDF, "later.pdf")).json.attachment as AttachmentMeta;
+    const iv = server.app.ctx.store.interviews.get(iid)!;
+    iv.attachments.find((a) => a.id === later.id)!.uploadedAt = new Date(Date.now() + 300 * 86_400_000).toISOString();
+    const r = await runRetention(server.app.ctx, Date.now() + (days + 1) * 86_400_000);
+    expect(r.attachmentsPurged).toBeGreaterThanOrEqual(1);
+    const d = (await alice.req("GET", `/api/interviews/${iid}`)).json as InterviewDetail;
+    expect(d.interview.attachments.map((a) => a.id)).toEqual([later.id]);
+    expect(existsSync(path.join(server.dataDir, "interviews", iid, "attachments", `${before.id}.pdf`))).toBe(false);
+    expect(existsSync(path.join(server.dataDir, "interviews", iid, "attachments", `${later.id}.pdf`))).toBe(true);
+  });
 });
 
 describe("事前のオンライン同意", () => {
@@ -146,11 +163,11 @@ describe("事前のオンライン同意", () => {
 
     const info = (await pub().req("GET", `/api/public/consent/${token}`)).json as PublicConsentInfo;
     expect(info.state).toBe("open");
-    expect(info.candidateName).toBe("山田 太郎");
-    expect(info.minor).toBe(true);
+    expect(info.details!.candidateName).toBe("山田 太郎");
+    expect(info.details!.minor).toBe(true);
     expect(info.orgName).toBe("テスト塾");
-    expect(info.consent.title.length).toBeGreaterThan(0);
-    expect(info.consent.version).toMatch(/^[0-9a-f]{12}$/);
+    expect(info.details!.consent.title.length).toBeGreaterThan(0);
+    expect(info.details!.consent.version).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it("本人・保護者が入力すると、オンラインの同意として記録され、リンクは使用済みになる", async () => {
@@ -158,7 +175,7 @@ describe("事前のオンライン同意", () => {
     const { token } = await linkFor(iid);
     const p = pub();
     const info = (await p.req("GET", `/api/public/consent/${token}`)).json as PublicConsentInfo;
-    const body = { recording: true, analysis: false, candidateName: "佐藤 花", guardianName: "佐藤 一郎", guardianRelation: "父", consentVersion: info.consent.version };
+    const body = { recording: true, analysis: false, candidateName: "佐藤 花", guardianName: "佐藤 一郎", guardianRelation: "父", consentVersion: info.details!.consent.version };
 
     // 未成年は保護者の名前が必要
     expect((await p.req("POST", `/api/public/consent/${token}`, { ...body, guardianName: "" })).status).toBe(400);
@@ -182,14 +199,17 @@ describe("事前のオンライン同意", () => {
       guardianName: "佐藤 一郎",
       guardianRelation: "父",
       obtainedBy: ids.alice,
-      consentVersion: info.consent.version,
+      consentVersion: info.details!.consent.version,
     });
     expect(d.interview.consent!.linkId).toBe(d.interview.consentLinks[0].id);
     expect(d.interview.consentLinks[0].usedAt).not.toBeNull();
 
     // 2回目は受け付けない。状態は「済み」
     expect((await p.req("POST", `/api/public/consent/${token}`, body)).status).toBe(409);
-    expect(((await p.req("GET", `/api/public/consent/${token}`)).json as PublicConsentInfo).state).toBe("done");
+    const doneInfo = (await p.req("GET", `/api/public/consent/${token}`)).json as PublicConsentInfo;
+    expect(doneInfo.state).toBe("done");
+    expect(doneInfo.details).toBeNull();
+    expect(JSON.stringify(doneInfo)).not.toContain("佐藤 花");
     // 同意が記録された面接には、新しいリンクを作れない
     expect((await alice.req("POST", `/api/interviews/${iid}/consent-links`, {})).status).toBe(409);
     // 操作ログに残る
@@ -202,17 +222,40 @@ describe("事前のオンライン同意", () => {
     const iid = await plainInterview({ candidate: { displayName: "大人の人", age: 20 } });
     const { token } = await linkFor(iid);
     const info = (await pub().req("GET", `/api/public/consent/${token}`)).json as PublicConsentInfo;
-    expect(info.minor).toBe(false);
+    expect(info.details!.minor).toBe(false);
     const r = await pub().req("POST", `/api/public/consent/${token}`, {
       recording: false,
       analysis: false,
       candidateName: "大人の人",
-      consentVersion: info.consent.version,
+      consentVersion: info.details!.consent.version,
     });
     expect(r.status).toBe(200);
     const d = (await alice.req("GET", `/api/interviews/${iid}`)).json as InterviewDetail;
     expect(d.interview.consent!.recording).toBe(false);
     expect(d.interview.recordingDeclined).toBe(true);
+  });
+
+  it("事前に録画を断られても、予定日時までは「録画前」のまま(面接の前に評価を求めない)", async () => {
+    const iid = await plainInterview({
+      candidate: { displayName: "これからの人", age: 20 },
+      scheduledAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    });
+    const { token } = await linkFor(iid);
+    const info = (await pub().req("GET", `/api/public/consent/${token}`)).json as PublicConsentInfo;
+    const r = await pub().req("POST", `/api/public/consent/${token}`, {
+      recording: false,
+      analysis: false,
+      candidateName: "これからの人",
+      consentVersion: info.details!.consent.version,
+    });
+    expect(r.status).toBe(200);
+    const statusOf = async () => ((await alice.req("GET", "/api/interviews")).json.interviews as InterviewListItem[]).find((x) => x.id === iid)!;
+    expect((await statusOf()).status).toBe("scheduled");
+    expect((await statusOf()).consent!.method).toBe("online");
+    expect(((await alice.req("GET", `/api/interviews/${iid}`)).json as InterviewDetail).status).toBe("scheduled");
+    // 予定日時を過ぎれば、録画なしで行った面接として評価に進む
+    expect((await admin.req("PATCH", `/api/interviews/${iid}`, { scheduledAt: new Date(Date.now() - 3600_000).toISOString() })).status).toBe(200);
+    expect((await statusOf()).status).toBe("evaluating");
   });
 
   it("取り消したリンク・期限切れのリンク・判定済みの面接のリンクは使えない", async () => {
@@ -221,17 +264,21 @@ describe("事前のオンライン同意", () => {
     const second = await linkFor(iid, bob, 3);
     const lid = first.detail.interview.consentLinks[0].id;
     expect((await alice.req("DELETE", `/api/interviews/${iid}/consent-links/${lid}`)).status).toBe(200);
-    expect(((await pub().req("GET", `/api/public/consent/${first.token}`)).json as PublicConsentInfo).state).toBe("revoked");
+    const revoked = (await pub().req("GET", `/api/public/consent/${first.token}`)).json as PublicConsentInfo;
+    expect(revoked.state).toBe("revoked");
+    // 取り消したリンクでは、候補者の名前や面接の日時・場所を返さない
+    expect(revoked.details).toBeNull();
+    expect(JSON.stringify(revoked)).not.toContain("書類の人");
     const info = (await pub().req("GET", `/api/public/consent/${second.token}`)).json as PublicConsentInfo;
     expect(info.state).toBe("open");
-    expect(Date.parse(info.expiresAt) - Date.now()).toBeGreaterThan(2.9 * 86_400_000);
+    expect(Date.parse(info.details!.expiresAt) - Date.now()).toBeGreaterThan(2.9 * 86_400_000);
 
     // 期限切れ
     const stored = server.app.ctx.store.interviews.get(iid)!.consentLinks.find((l) => l.createdBy === ids.bob)!;
     const saved = stored.expiresAt;
     stored.expiresAt = new Date(Date.now() - 1000).toISOString();
     expect(((await pub().req("GET", `/api/public/consent/${second.token}`)).json as PublicConsentInfo).state).toBe("expired");
-    const body = { recording: true, analysis: true, candidateName: "x", consentVersion: info.consent.version };
+    const body = { recording: true, analysis: true, candidateName: "x", consentVersion: info.details!.consent.version };
     expect((await pub().req("POST", `/api/public/consent/${second.token}`, body)).status).toBe(409);
     stored.expiresAt = saved;
 

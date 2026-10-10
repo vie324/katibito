@@ -122,17 +122,21 @@ export function registerConsentLinkRoutes(r: Router, app: AppContext): void {
   r.get("/api/public/consent/:token", "none", (c): PublicConsentInfo => {
     const { iv, link } = lookup(app, c);
     const s = store.settings;
+    const state = linkState(iv, link);
+    if (state !== "open") return { orgName: s.orgName, contact: s.contact, state, details: null };
     const { rendered, version } = renderedConsent(app);
     return {
       orgName: s.orgName,
       contact: s.contact,
-      candidateName: iv.candidate.displayName,
-      scheduledAt: iv.scheduledAt,
-      location: iv.location,
-      minor: isMinor(iv.candidate),
-      state: linkState(iv, link),
-      expiresAt: link.expiresAt,
-      consent: { ...rendered, version },
+      state,
+      details: {
+        candidateName: iv.candidate.displayName,
+        scheduledAt: iv.scheduledAt,
+        location: iv.location,
+        minor: isMinor(iv.candidate),
+        expiresAt: link.expiresAt,
+        consent: { ...rendered, version },
+      },
     };
   });
 

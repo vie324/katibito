@@ -208,15 +208,21 @@ export type ConsentLink = {
 export type PublicConsentInfo = {
   orgName: string;
   contact: string;
-  candidateName: string;
-  scheduledAt: string | null;
-  location: string;
-  /** 未成年(保護者の同意が必要) */
-  minor: boolean;
   /** open = 入力できる / done = 同意の記録が済んでいる / expired = 期限切れ / revoked = 取り消し済み */
   state: "open" | "done" | "expired" | "revoked";
-  expiresAt: string;
-  consent: { title: string; body: string; version: string };
+  /**
+   * 面接の情報と同意文。入力できるとき(open)だけ返す
+   * (送り間違えて取り消したリンクなどで、候補者の名前や面接の日時・場所が見えないように)
+   */
+  details: {
+    candidateName: string;
+    scheduledAt: string | null;
+    location: string;
+    /** 未成年(保護者の同意が必要) */
+    minor: boolean;
+    expiresAt: string;
+    consent: { title: string; body: string; version: string };
+  } | null;
 };
 
 export type MarkerKind = "question" | "bookmark";
@@ -373,7 +379,7 @@ export type InterviewListItem = {
   interviewerIds: string[];
   createdAt: string;
   status: InterviewStatus;
-  consent: { recording: boolean; analysis: boolean } | null;
+  consent: { recording: boolean; analysis: boolean; method: ConsentRecord["method"] } | null;
   recordingDeclined: boolean;
   recordingCount: number;
   readyRecordingCount: number;

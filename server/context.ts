@@ -35,6 +35,8 @@ export type AppContext = {
   store: Store;
   sessions: Sessions;
   limiter: LoginLimiter;
+  /** 2段階認証の確認コード・予備のコードの試行の制限(1つのアカウントにつき1時間に10回まで) */
+  totpLimiter: LoginLimiter;
   audit: Audit;
   jobs: Jobs;
   /** 初期設定コード(ユーザーがいる間は null) */

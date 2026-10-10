@@ -16,6 +16,14 @@ export function interviewLink(ctx: AppContext, iv: Pick<Interview, "id">): strin
   return base ? `${base}/interviews/${iv.id}` : "";
 }
 
+/**
+ * メールに載せるリンク。APP_URL が設定されているときだけ(利用者のリクエストから推定したアドレスは使わない。
+ * ヘッダを書き換えたリクエストで、職員に届くメールのリンクを別のサイトに向けられないように)
+ */
+export function mailLink(ctx: AppContext, iv: Pick<Interview, "id">): string {
+  return ctx.config.appUrl ? `${ctx.config.appUrl}/interviews/${iv.id}` : "";
+}
+
 function minutes(ms: number | null): string {
   if (!ms) return "";
   const m = Math.round(ms / 60_000);
@@ -44,7 +52,7 @@ export function interviewLines(ctx: AppContext, iv: IvLike): string {
   const lines = [];
   if (iv.scheduledAt) lines.push(`面接日時: ${jstShort(iv.scheduledAt)}`);
   if (iv.location) lines.push(`場所: ${iv.location}`);
-  const link = interviewLink(ctx, iv);
+  const link = mailLink(ctx, iv);
   if (link) lines.push(link);
   return lines.join("\n");
 }

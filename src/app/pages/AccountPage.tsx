@@ -174,9 +174,11 @@ function TotpSection() {
   };
   const enable = async (e: FormEvent) => {
     e.preventDefault();
-    const r = await run(() => api.totpEnable(code.trim()));
-    setCode("");
+    const r = await run(() => api.totpEnable(code.trim(), password));
+    // パスワードの入れ間違いのときに、確認コードを入れ直さなくてよいように、コードは成功したときだけ消す
+    setPassword("");
     if (r) {
+      setCode("");
       setCodes(r.recoveryCodes);
       setSetup(null);
       await load();
@@ -264,6 +266,9 @@ function TotpSection() {
             <div className="num totp-secret">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</div>
             <Field label="アプリに表示された6桁の数字">
               <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={8} required />
+            </Field>
+            <Field label="ログインのパスワード" hint="本人の操作であることを確かめるため">
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
             </Field>
             <div className="row-actions left">
               <button className="primary" disabled={busy}>

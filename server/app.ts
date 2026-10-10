@@ -77,6 +77,7 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
     store,
     sessions: new Sessions(store, config.sessionTtlMs),
     limiter: new LoginLimiter(),
+    totpLimiter: new LoginLimiter(10, 30, 60 * 60_000, 10),
     audit: new Audit(path.join(store.dir, "audit")),
     jobs: new Jobs(),
     setup: { code: null },
@@ -98,6 +99,9 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
         ? `[server] メール: ${config.mail.host}:${config.mail.port} から送信します(差出人 ${config.mail.from})`
         : "[server] メール: SMTP_HOST・MAIL_FROM が未設定のため送信しません",
     );
+    if (mailEnabled(ctx) && !config.appUrl) {
+      console.log("[server] メール: APP_URL が未設定のため、メールにはアプリへのリンクを載せません(APP_URL を設定してください)");
+    }
   }
 
   if (store.users.size === 0) {
@@ -122,6 +126,9 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
   const serveStatic = config.staticDir ? createStaticHandler(config.staticDir) : null;
 
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, c: Ctx): Promise<void> {
+    // 空の区切り(// や末尾の /)を含むパスは受け付けない。ルーターは空の区切りを無視して照合するため、
+    // パスの文字列で判定する処理(閲覧範囲など)をすり抜けられないように
+    if (/\/\/|.\/$/.test(url.pathname)) throw new HttpError(404, "見つかりません");
     const m = router.match(req.method ?? "GET", url.pathname);
     if (m === null) throw new HttpError(404, "見つかりません");
     if (m === "method-not-allowed") throw new HttpError(405, "このメソッドは使えません");
@@ -151,8 +158,10 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
       throw new HttpError(403, "管理者は2段階認証の設定が必要です。「アカウント」で設定してください");
     }
     if (m.route.auth === "admin" && c.user?.role !== "admin") throw new HttpError(403, "管理者のみ実行できます");
-    // 面接ごとの API は、その面接を見られる人だけ(見られない面接は「見つからない」と同じ応答にする)
-    if (c.user && c.params.id && url.pathname.startsWith("/api/interviews/")) {
+    // 面接ごとの API は、その面接を見られる人だけ(見られない面接は「見つからない」と同じ応答にする)。
+    // 判定は照合したルートの形(/api/interviews/:id…)で行う(パスの書き方の違いに左右されない)
+    const parts = m.route.parts;
+    if (c.user && parts[0] === "api" && parts[1] === "interviews" && parts[2] === ":id") {
       const iv = store.interviews.get(c.params.id);
       if (iv && !canView(ctx, c.user, iv)) throw new HttpError(404, "面接が見つかりません");
     }

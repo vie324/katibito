@@ -29,11 +29,21 @@ export function attachmentFile(app: AppContext, iid: string, a: Pick<AttachmentM
   return path.join(attachmentsDir(app, iid), `${a.id}${ext}`);
 }
 
-/** 添付ファイルをすべて消す(保存期間・面接の削除) */
+/** 添付ファイルをすべて消す(面接の削除) */
 export async function deleteAttachments(app: AppContext, iv: Interview): Promise<number> {
   const n = iv.attachments.length;
   await rm(attachmentsDir(app, iv.id), { recursive: true, force: true });
   iv.attachments = [];
   return n;
+}
+
+/** 条件に合う添付ファイルだけを消す(保存期間)。消した数を返す */
+export async function deleteAttachmentsWhere(app: AppContext, iv: Interview, expired: (a: AttachmentMeta) => boolean): Promise<number> {
+  const gone = iv.attachments.filter(expired);
+  if (gone.length === 0) return 0;
+  if (gone.length === iv.attachments.length) return deleteAttachments(app, iv);
+  for (const a of gone) await rm(attachmentFile(app, iv.id, a), { force: true });
+  iv.attachments = iv.attachments.filter((a) => !gone.includes(a));
+  return gone.length;
 }
 
