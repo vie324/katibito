@@ -43,7 +43,11 @@ export type AppContext = {
   lastOrigin: string | null;
   /** 録画中の録画(キーは "<面接ID>/<録画ID>")。録画している端末の心拍で更新する。保存はしない */
   live: Map<string, LiveState>;
+  /** パスワードは合っていて、2段階認証の確認コードを待っているログイン(キーは一時的な合言葉) */
+  loginTickets: Map<string, LoginTicket>;
 };
+
+export type LoginTicket = { userId: string; expiresAt: number; attempts: number };
 
 export type LiveState = {
   /** 録画開始(t = 0)のサーバー時刻(ms) */

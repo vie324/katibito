@@ -1063,3 +1063,43 @@ table.list td.center {
     gap: 2px;
   }
 }
+
+/* ---------------------------------------------------------------- 2段階認証 */
+
+.totp-setup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--rule);
+}
+.totp-setup .qr {
+  flex: none;
+}
+.totp-steps {
+  margin: 0;
+  padding-left: 18px;
+}
+.totp-secret {
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  padding: var(--space-2);
+  background: var(--panel-raised);
+  border: 1px solid var(--rule);
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.recovery-codes {
+  padding: var(--space-3);
+  border: 1px solid rgba(232, 163, 61, 0.5);
+}
+.recovery-codes ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 4px var(--space-3);
+  list-style: none;
+  padding: 0;
+  margin: var(--space-2) 0;
+  font-size: 15px;
+}

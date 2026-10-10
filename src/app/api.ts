@@ -140,8 +140,17 @@ export const api = {
   session: () => request<SessionInfo>("GET", "/api/session"),
   setup: (b: { setupCode: string; orgName: string; loginId: string; name: string; password: string }) =>
     request<{ user: UserPublic }>("POST", "/api/setup", b),
+  /** 2段階認証を設定している人は user の代わりに ticket が返る(確認コードを loginTotp で送る) */
   login: (loginId: string, password: string) =>
-    request<{ user: UserPublic }>("POST", "/api/login", { loginId, password }),
+    request<{ user?: UserPublic; totpRequired?: true; ticket?: string }>("POST", "/api/login", { loginId, password }),
+  loginTotp: (ticket: string, code: string) =>
+    request<{ user: UserPublic; recoveryRemaining: number }>("POST", "/api/login/totp", { ticket, code }),
+  totpStatus: () => request<{ enabled: boolean; enabledAt: string | null; recoveryRemaining: number }>("GET", "/api/me/totp"),
+  totpSetup: () => request<{ secret: string; uri: string }>("POST", "/api/me/totp/setup", {}),
+  totpEnable: (code: string) => request<{ recoveryCodes: string[] }>("POST", "/api/me/totp/enable", { code }),
+  totpRecovery: (code: string) => request<{ recoveryCodes: string[] }>("POST", "/api/me/totp/recovery", { code }),
+  totpDisable: (password: string) => request<{ ok: true }>("POST", "/api/me/totp/disable", { password }),
+  resetUserTotp: (id: string) => request<{ user: UserAccount }>("POST", `/api/users/${enc(id)}/totp/reset`, {}),
   logout: () => request<{ ok: true }>("POST", "/api/logout", {}),
   changePassword: (current: string, next: string) =>
     request<{ ok: true }>("POST", "/api/me/password", { current, next }),

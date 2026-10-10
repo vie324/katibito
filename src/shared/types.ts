@@ -25,7 +25,7 @@ export type NotifyPrefs = {
 };
 
 /** 本人と管理者だけが見られる項目(メールアドレス・お知らせの設定)を含む利用者の情報 */
-export type UserAccount = UserPublic & { email: string; notify: NotifyPrefs };
+export type UserAccount = UserPublic & { email: string; notify: NotifyPrefs; totpEnabled: boolean };
 
 export type SessionInfo = {
   user: UserPublic | null;
@@ -40,6 +40,8 @@ export type SessionInfo = {
     /** メールのお知らせ(サーバーで SMTP を設定済み) */
     mail: boolean;
   };
+  /** 管理者に2段階認証が必須なのに、まだ設定していない(設定するまでほかの操作はできない) */
+  mustSetupTotp: boolean;
 };
 
 // ---------------------------------------------------------------------------

@@ -100,9 +100,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const setUser = useCallback((u: UserPublic | null) => {
-    setInfo((prev) => (prev ? { ...prev, user: u, needsSetup: false } : prev));
-  }, []);
+  const setUser = useCallback(
+    (u: UserPublic | null) => {
+      setInfo((prev) => (prev ? { ...prev, user: u, needsSetup: false } : prev));
+      // 使える機能・2段階認証の要否はログインした人で変わるので、読み直す
+      if (u) void refresh();
+    },
+    [refresh],
+  );
 
   return (
     <SessionContext.Provider

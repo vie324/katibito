@@ -23,6 +23,19 @@ export type UserRecord = UserPublic & {
   /** お知らせを送るメールアドレス(空なら送らない) */
   email: string;
   notify: NotifyPrefs;
+  /** 2段階認証(有効なら) */
+  totp: TotpRecord | null;
+  /** 設定の途中(確認コードを入れるまで有効にしない) */
+  totpPending: { secret: string; createdAt: string } | null;
+};
+
+export type TotpRecord = {
+  secret: string;
+  enabledAt: string;
+  /** 最後に使った時間刻み(同じコードの使い回しを防ぐ) */
+  lastStep: number;
+  /** 予備のコードのハッシュ(使うと消える) */
+  recovery: string[];
 };
 
 export type SessionRecord = {
@@ -93,7 +106,13 @@ export class Store {
     const users = (await readJsonFile<UserRecord[]>(path.join(this.dir, "users.json"))) ?? [];
     for (const u of users) {
       // v0.2 までの利用者にはメールの項目がない
-      this.users.set(u.id, { ...u, email: u.email ?? "", notify: { ...defaultNotifyPrefs(u.role), ...(u.notify ?? {}) } });
+      this.users.set(u.id, {
+        ...u,
+        email: u.email ?? "",
+        notify: { ...defaultNotifyPrefs(u.role), ...(u.notify ?? {}) },
+        totp: u.totp ?? null,
+        totpPending: u.totpPending ?? null,
+      });
     }
 
     const sessions =
@@ -159,7 +178,7 @@ export class Store {
 
   /** 本人と管理者に見せる情報(メールアドレスとお知らせの設定を含む) */
   accountView(u: UserRecord): UserAccount {
-    return { ...this.publicUser(u), email: u.email, notify: { ...u.notify } };
+    return { ...this.publicUser(u), email: u.email, notify: { ...u.notify }, totpEnabled: !!u.totp };
   }
 
   publicUser(u: UserRecord): UserPublic {

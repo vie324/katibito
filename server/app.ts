@@ -22,7 +22,7 @@ import { registerConsentLinkRoutes } from "./routes/consentLinks";
 import { registerExportRoutes } from "./routes/export";
 import { registerSearchRoutes } from "./routes/search";
 import { registerInsightRoutes } from "./routes/insights";
-import { canView } from "./access";
+import { canView, mustSetupTotp } from "./access";
 import { registerInterviewRoutes } from "./routes/interviews";
 import { registerRecordingRoutes } from "./routes/recordings";
 import { createStaticHandler } from "./static";
@@ -34,6 +34,9 @@ export type App = {
   listen(port?: number, host?: string): Promise<AddressInfo>;
   close(): Promise<void>;
 };
+
+/** 2段階認証を設定するまでの間も使える API */
+const TOTP_SETUP_PATHS = /^\/api\/(session|logout|health|me|me\/totp(\/[a-z]+)?|me\/password)$/;
 
 function setSecurityHeaders(res: ServerResponse): void {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -79,6 +82,7 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
     setup: { code: null },
     lastOrigin: null,
     live: new Map(),
+    loginTickets: new Map(),
   };
   const log = opts.log ?? true;
 
@@ -142,6 +146,10 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
     }
 
     if (m.route.auth !== "none" && !c.user) throw new HttpError(401, "ログインしてください");
+    // 管理者に2段階認証が必須なのに未設定なら、設定するまでほかの操作はさせない
+    if (c.user && mustSetupTotp(ctx, c.user) && !TOTP_SETUP_PATHS.test(url.pathname)) {
+      throw new HttpError(403, "管理者は2段階認証の設定が必要です。「アカウント」で設定してください");
+    }
     if (m.route.auth === "admin" && c.user?.role !== "admin") throw new HttpError(403, "管理者のみ実行できます");
     // 面接ごとの API は、その面接を見られる人だけ(見られない面接は「見つからない」と同じ応答にする)
     if (c.user && c.params.id && url.pathname.startsWith("/api/interviews/")) {

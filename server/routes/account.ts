@@ -18,9 +18,11 @@ import {
 import { burnPasswordCheck, hashPassword, SESSION_COOKIE, setupCodeMatches, verifyPassword } from "../auth";
 import type { AppContext } from "../context";
 import { HttpError, readJson, setCookie, type Ctx, type Router } from "../http";
+import { mustSetupTotp } from "../access";
 import { mailEnabled, mailStatus, sendMailOrThrow } from "../mail";
 import { isAllowedWebhookUrl } from "../notify";
 import { newId, type UserRecord } from "../store";
+import { hashRecovery, looksLikeRecovery, newRecoveryCodes, newTotpSecret, otpauthUri, verifyTotp } from "../totp";
 import { ffmpegPath } from "../transcode";
 import { whisperCli } from "../transcribe";
 
@@ -55,8 +57,16 @@ function notifyOf(v: unknown, current: NotifyPrefs): NotifyPrefs {
   return { evaluation: pick("evaluation"), dayBefore: pick("dayBefore"), live: pick("live"), admin: pick("admin") };
 }
 
-function newUserFields(role: Role, email: string): Pick<UserRecord, "email" | "notify"> {
-  return { email, notify: defaultNotifyPrefs(role) };
+function newUserFields(role: Role, email: string): Pick<UserRecord, "email" | "notify" | "totp" | "totpPending"> {
+  return { email, notify: defaultNotifyPrefs(role), totp: null, totpPending: null };
+}
+
+const TICKET_TTL_MS = 5 * 60_000;
+const TICKET_MAX_ATTEMPTS = 5;
+
+function pruneTickets(app: AppContext): void {
+  const now = Date.now();
+  for (const [k, t] of app.loginTickets) if (t.expiresAt <= now) app.loginTickets.delete(k);
 }
 
 export function registerAccountRoutes(r: Router, app: AppContext): void {
@@ -73,6 +83,7 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
       transcription: !!c.user && store.settings.transcription.enabled && !!whisperCli(app) && !!ffmpegPath(),
       mail: !!c.user && mailEnabled(app),
     },
+    mustSetupTotp: !!c.user && mustSetupTotp(app, c.user),
   }));
 
   // ---------------------------------------------------------------- 初期設定
@@ -130,10 +141,66 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
       await app.audit.write({ userId: null, userName: null, action: "login_failed", interviewId: null, detail: loginId.slice(0, 64), ip: c.ip });
       throw new HttpError(401, "ログインIDまたはパスワードが違います");
     }
+    // 2段階認証を設定している人は、確認コードを入れるまでログインさせない
+    if (user.totp) {
+      pruneTickets(app);
+      const ticket = newId(24);
+      app.loginTickets.set(ticket, { userId: user.id, expiresAt: Date.now() + TICKET_TTL_MS, attempts: 0 });
+      return { totpRequired: true, ticket };
+    }
     app.limiter.succeed(c.ip, loginId);
     startSession(app, c, user);
     await app.audit.write({ userId: user.id, userName: user.name, action: "login", interviewId: null, detail: null, ip: c.ip });
     return { user: store.publicUser(user) };
+  });
+
+  // ログインの2段目: 認証アプリの確認コード、または予備のコード
+  r.post("/api/login/totp", "none", async (c) => {
+    const body = obj(await readJson(c));
+    const ticketId = str(body.ticket, "ログインの手続き", { max: 64, min: 1 });
+    const code = str(body.code, "確認コード", { max: 20, min: 1 });
+    pruneTickets(app);
+    const ticket = app.loginTickets.get(ticketId);
+    const user = ticket ? store.users.get(ticket.userId) : undefined;
+    if (!ticket || !user || user.disabled || !user.totp) {
+      app.loginTickets.delete(ticketId);
+      throw new HttpError(401, "時間がたったため、もう一度ログインしてください");
+    }
+    if (app.limiter.blocked(c.ip, user.loginId)) {
+      throw new HttpError(429, "ログインの失敗が続いたため、一時的にロックしています。15分ほど待ってから再度お試しください");
+    }
+    const result = await store.withLock(USERS_LOCK, async () => {
+      const u = store.users.get(user.id);
+      if (!u?.totp) return null;
+      const step = verifyTotp(u.totp.secret, code, u.totp.lastStep);
+      if (step !== null) {
+        u.totp.lastStep = step;
+        await store.saveUsers();
+        return "totp" as const;
+      }
+      if (looksLikeRecovery(code)) {
+        const h = hashRecovery(code);
+        const i = u.totp.recovery.indexOf(h);
+        if (i >= 0) {
+          u.totp.recovery.splice(i, 1);
+          await store.saveUsers();
+          return "recovery" as const;
+        }
+      }
+      return null;
+    });
+    if (!result) {
+      ticket.attempts++;
+      if (ticket.attempts >= TICKET_MAX_ATTEMPTS) app.loginTickets.delete(ticketId);
+      app.limiter.fail(c.ip, user.loginId);
+      await app.audit.write({ userId: user.id, userName: user.name, action: "login_failed", interviewId: null, detail: "2段階認証", ip: c.ip });
+      throw new HttpError(401, ticket.attempts >= TICKET_MAX_ATTEMPTS ? "確認コードが違います。もう一度ログインしてください" : "確認コードが違います");
+    }
+    app.loginTickets.delete(ticketId);
+    app.limiter.succeed(c.ip, user.loginId);
+    startSession(app, c, user);
+    await app.audit.write({ userId: user.id, userName: user.name, action: "login", interviewId: null, detail: result === "recovery" ? "予備のコード" : "2段階認証", ip: c.ip });
+    return { user: store.publicUser(user), recoveryRemaining: user.totp!.recovery.length };
   });
 
   r.post("/api/logout", "none", (c) => {
@@ -153,6 +220,84 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     await store.saveUsers();
     app.sessions.destroyUser(user.id, c.sessionToken ?? undefined);
     await app.audit.write({ userId: user.id, userName: user.name, action: "password_change", interviewId: null, detail: null, ip: c.ip });
+    return { ok: true };
+  });
+
+  // ---------------------------------------------------------------- 2段階認証
+  r.get("/api/me/totp", "user", (c) => {
+    const u = c.user!;
+    return { enabled: !!u.totp, enabledAt: u.totp?.enabledAt ?? null, recoveryRemaining: u.totp?.recovery.length ?? 0 };
+  });
+
+  // 設定を始める: 秘密の鍵を作り、認証アプリに登録してもらう(確認コードを入れるまで有効にしない)
+  r.post("/api/me/totp/setup", "user", async (c) => {
+    const out = await store.withLock(USERS_LOCK, async () => {
+      const u = store.users.get(c.user!.id)!;
+      if (u.totp) throw new HttpError(409, "2段階認証はすでに有効です");
+      u.totpPending = { secret: newTotpSecret(), createdAt: new Date().toISOString() };
+      await store.saveUsers();
+      return u.totpPending.secret;
+    });
+    const issuer = store.settings.orgName.trim() ? `面接記録(${store.settings.orgName.trim()})` : "面接記録";
+    return { secret: out, uri: otpauthUri(out, c.user!.loginId, issuer) };
+  });
+
+  r.post("/api/me/totp/enable", "user", async (c) => {
+    const body = obj(await readJson(c));
+    const code = str(body.code, "確認コード", { max: 20, min: 1 });
+    const codes = newRecoveryCodes();
+    await store.withLock(USERS_LOCK, async () => {
+      const u = store.users.get(c.user!.id)!;
+      if (u.totp) throw new HttpError(409, "2段階認証はすでに有効です");
+      const pending = u.totpPending;
+      if (!pending || Date.now() - Date.parse(pending.createdAt) > 30 * 60_000) {
+        throw new HttpError(409, "時間がたったため、最初からやり直してください");
+      }
+      const step = verifyTotp(pending.secret, code, -1);
+      if (step === null) throw new HttpError(400, "確認コードが違います。認証アプリに表示されている6桁の数字を入れてください");
+      u.totp = { secret: pending.secret, enabledAt: new Date().toISOString(), lastStep: step, recovery: codes.map(hashRecovery) };
+      u.totpPending = null;
+      await store.saveUsers();
+    });
+    // ほかの端末のログインは解除する(この先は確認コードが必要)
+    app.sessions.destroyUser(c.user!.id, c.sessionToken ?? undefined);
+    await app.audit.write({ userId: c.user!.id, userName: c.user!.name, action: "totp_enable", interviewId: null, detail: null, ip: c.ip });
+    return { recoveryCodes: codes };
+  });
+
+  // 予備のコードを作り直す(今の確認コードが必要)
+  r.post("/api/me/totp/recovery", "user", async (c) => {
+    const body = obj(await readJson(c));
+    const code = str(body.code, "確認コード", { max: 20, min: 1 });
+    const codes = newRecoveryCodes();
+    await store.withLock(USERS_LOCK, async () => {
+      const u = store.users.get(c.user!.id)!;
+      if (!u.totp) throw new HttpError(409, "2段階認証が有効ではありません");
+      const step = verifyTotp(u.totp.secret, code, u.totp.lastStep);
+      if (step === null) throw new HttpError(400, "確認コードが違います");
+      u.totp.lastStep = step;
+      u.totp.recovery = codes.map(hashRecovery);
+      await store.saveUsers();
+    });
+    await app.audit.write({ userId: c.user!.id, userName: c.user!.name, action: "totp_recovery", interviewId: null, detail: null, ip: c.ip });
+    return { recoveryCodes: codes };
+  });
+
+  r.post("/api/me/totp/disable", "user", async (c) => {
+    const body = obj(await readJson(c));
+    const pw = typeof body.password === "string" ? body.password : "";
+    const me = c.user!;
+    if (!(await verifyPassword(pw, me.passwordHash))) throw new HttpError(400, "パスワードが違います");
+    if (me.role === "admin" && store.settings.security.requireTotpForAdmins) {
+      throw new HttpError(409, "管理者は2段階認証が必須の設定のため、無効にできません");
+    }
+    await store.withLock(USERS_LOCK, async () => {
+      const u = store.users.get(me.id)!;
+      u.totp = null;
+      u.totpPending = null;
+      await store.saveUsers();
+    });
+    await app.audit.write({ userId: me.id, userName: me.name, action: "totp_disable", interviewId: null, detail: null, ip: c.ip });
     return { ok: true };
   });
 
@@ -267,6 +412,21 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     return { user: store.accountView(user) };
   });
 
+  // スマートフォンをなくした人の2段階認証を解除する(本人は次のログインで設定し直す)
+  r.post("/api/users/:id/totp/reset", "admin", async (c) => {
+    const user = await store.withLock(USERS_LOCK, async () => {
+      const u = store.users.get(c.params.id);
+      if (!u) throw new HttpError(404, "ユーザーが見つかりません");
+      u.totp = null;
+      u.totpPending = null;
+      await store.saveUsers();
+      return u;
+    });
+    app.sessions.destroyUser(user.id);
+    await app.audit.write({ userId: c.user!.id, userName: c.user!.name, action: "totp_reset", interviewId: null, detail: user.loginId, ip: c.ip });
+    return { user: store.accountView(user) };
+  });
+
   // ---------------------------------------------------------------- メール
   r.get("/api/admin/mail", "admin", () => ({ status: mailStatus(app) }));
 
@@ -293,6 +453,9 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
   r.put("/api/settings", "admin", async (c) => {
     const body = obj(await readJson(c, 256 * 1024));
     const s = parseSettings(body, store.settings);
+    if (s.security.requireTotpForAdmins && !store.settings.security.requireTotpForAdmins && !c.user!.totp) {
+      throw new HttpError(409, "先に自分の2段階認証を設定してください(「アカウント」から)");
+    }
     s.updatedAt = new Date().toISOString();
     s.updatedBy = c.user!.id;
     store.settings = s;

@@ -69,6 +69,11 @@ function AppRoutes() {
     if (user) void uploader.start();
   }, [user]);
 
+  // 管理者に2段階認証が必須なのに未設定なら、設定する画面へ
+  useEffect(() => {
+    if (info?.user && info.mustSetupTotp && path !== "/account") navigate("/account", { replace: true, force: true });
+  }, [info, path, navigate]);
+
   useEffect(() => {
     if (loading || !info) return;
     if (info.needsSetup && path !== "/setup") navigate("/setup", { replace: true, force: true });

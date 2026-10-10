@@ -13,3 +13,8 @@ export function canView(app: AppContext, user: Pick<UserRecord, "id" | "role">, 
   if (app.store.settings.access.interviewerScope === "all") return true;
   return iv.interviewerIds.includes(user.id) || iv.createdBy === user.id;
 }
+
+/** 管理者に2段階認証が必須なのに、この人はまだ設定していない */
+export function mustSetupTotp(app: AppContext, user: Pick<UserRecord, "role" | "totp">): boolean {
+  return user.role === "admin" && app.store.settings.security.requireTotpForAdmins && !user.totp;
+}

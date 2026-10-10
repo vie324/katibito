@@ -232,6 +232,19 @@ function FeaturesTab({ draft, setDraft }: TabProps) {
           <span className="muted small">— 画面の撮影や持ち出しを防ぐため</span>
         </span>
       </label>
+
+      <h3>ログイン</h3>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={draft.security.requireTotpForAdmins}
+          onChange={(e) => setDraft({ ...draft, security: { ...draft.security, requireTotpForAdmins: e.target.checked } })}
+        />
+        <span>
+          管理者に2段階認証を必須にする(おすすめ)
+          <span className="muted small">— 管理者は録画・評価・設定のすべてに触れられるため。オンにする前に、自分の2段階認証を「アカウント」で設定してください</span>
+        </span>
+      </label>
     </div>
   );
 }
@@ -578,6 +591,7 @@ function UsersTab() {
               <th>氏名</th>
               <th>ログインID</th>
               <th>メール</th>
+              <th>2段階認証</th>
               <th>権限</th>
               <th>状態</th>
               <th />
@@ -589,6 +603,7 @@ function UsersTab() {
                 <td>{u.name}</td>
                 <td className="num">{u.loginId}</td>
                 <td className="small">{u.email || <span className="muted">未登録</span>}</td>
+                <td className="small">{u.totpEnabled ? <span className="ok-text">有効</span> : <span className="muted">—</span>}</td>
                 <td>{u.role === "admin" ? "管理者" : "面接官"}</td>
                 <td>{u.disabled ? "無効" : "有効"}</td>
                 <td className="right">
@@ -680,6 +695,23 @@ function UserForm({ user, isSelf, onClose, onSaved }: { user?: UserAccount; isSe
         <Field label={user ? "パスワードの再設定" : "初期パスワード"} required={!user} hint={user ? "変更する場合のみ入力(8文字以上)。この人のほかの端末のログインは解除されます" : "8文字以上。本人に伝え、ログイン後に変更してもらってください"}>
           <input value={password} onChange={(e) => setPassword(e.target.value)} type="text" autoComplete="off" />
         </Field>
+        {user?.totpEnabled && (
+          <div className="feature-status">
+            <span className="small">2段階認証: 有効</span>
+            <button
+              type="button"
+              className="quiet small danger-text"
+              disabled={busy}
+              onClick={async () => {
+                if (!window.confirm(`${user.name} の2段階認証を解除します。スマートフォンをなくした場合などに使います。本人は次のログインで設定し直してください。`)) return;
+                const ok = await run(() => api.resetUserTotp(user.id));
+                if (ok) await onSaved();
+              }}
+            >
+              2段階認証を解除する
+            </button>
+          </div>
+        )}
         {user && !isSelf && (
           <label className="check">
             <input type="checkbox" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} />
@@ -703,6 +735,12 @@ function UserForm({ user, isSelf, onClose, onSaved }: { user?: UserAccount; isSe
 const ACTION_LABEL: Record<string, string> = {
   setup: "初期設定",
   notify_update: "お知らせの設定",
+  totp_enable: "2段階認証の設定",
+  totp_disable: "2段階認証の無効化",
+  totp_recovery: "予備のコードの再発行",
+  totp_reset: "2段階認証の解除",
+  search: "検索",
+  interview_export: "データの書き出し",
   mail_test: "テストメール",
   attachment_upload: "書類の添付",
   attachment_view: "書類の閲覧",
