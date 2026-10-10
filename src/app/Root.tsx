@@ -1,4 +1,5 @@
 // 画面の振り分け。/demo は従来の行動シグナル解析デモ(ログイン不要・サーバー不要)。
+// /c/<トークン> は本人・保護者が事前の同意を入力するページ(ログイン不要)。
 // API サーバーがない静的ホスティングで開かれた場合は、どのパスでもデモを出す。
 
 import { lazy, Suspense, useEffect } from "react";
@@ -17,6 +18,12 @@ const DemoApp = lazy(() => import("../demo/DemoApp"));
 const RecordPage = lazy(() => import("./pages/RecordPage"));
 const ImportPage = lazy(() => import("./pages/ImportPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const ReportPage = lazy(() => import("./pages/ReportPage"));
+const NoticePage = lazy(() => import("./pages/NoticePage"));
+const ComparePage = lazy(() => import("./pages/ComparePage"));
+const CalendarPage = lazy(() => import("./pages/CalendarPage"));
+const PublicConsentPage = lazy(() => import("./pages/PublicConsentPage"));
+const SearchPage = lazy(() => import("./pages/SearchPage"));
 
 export function Root() {
   return (
@@ -35,6 +42,15 @@ function RootInner() {
       </Suspense>
     );
   }
+  // 本人・保護者が開く同意のページ(ログイン不要)
+  const consent = matchPath("/c/:token", path);
+  if (consent) {
+    return (
+      <Suspense fallback={<Loading />}>
+        <PublicConsentPage token={consent.token} />
+      </Suspense>
+    );
+  }
   return (
     <ToastProvider>
       <SessionProvider>
@@ -49,9 +65,16 @@ function AppRoutes() {
   const { info, user, loading, error, noServer } = useSession();
 
   // 送信待ちの録画があれば、どの画面からでも送信を続ける
+  // (2段階認証の設定を求められている間は API を使えないので、設定が済んでから)
+  const mustSetupTotp = info?.mustSetupTotp ?? false;
   useEffect(() => {
-    if (user) void uploader.start();
-  }, [user]);
+    if (user && !mustSetupTotp) void uploader.start();
+  }, [user, mustSetupTotp]);
+
+  // 管理者に2段階認証が必須なのに未設定なら、設定する画面へ
+  useEffect(() => {
+    if (info?.user && info.mustSetupTotp && path !== "/account") navigate("/account", { replace: true, force: true });
+  }, [info, path, navigate]);
 
   useEffect(() => {
     if (loading || !info) return;
@@ -89,7 +112,12 @@ function AppRoutes() {
   else if ((m = matchPath("/interviews/:id/edit", path))) page = <InterviewEditPage id={m.id} />;
   else if ((m = matchPath("/interviews/:id/record", path))) page = <RecordPage id={m.id} />;
   else if ((m = matchPath("/interviews/:id/import", path))) page = <ImportPage id={m.id} />;
+  else if ((m = matchPath("/interviews/:id/report", path))) page = <ReportPage id={m.id} />;
+  else if ((m = matchPath("/interviews/:id/notice", path)) && user.role === "admin") page = <NoticePage id={m.id} />;
   else if ((m = matchPath("/interviews/:id", path))) page = <InterviewDetailPage id={m.id} />;
+  else if (path === "/calendar") page = <CalendarPage />;
+  else if (path === "/search") page = <SearchPage />;
+  else if (path === "/compare") page = <ComparePage />;
   else if (path === "/settings" && user.role === "admin") page = <SettingsPage />;
   else if (path === "/account") page = <AccountPage />;
   else page = <Notice kind="warn">ページが見つかりません。</Notice>;

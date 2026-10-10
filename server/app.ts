@@ -10,10 +10,19 @@ import type { Config } from "./config";
 import { Jobs, type AppContext } from "./context";
 import { HANDLED, HttpError, parseCookies, Router, sendError, sendJson, type Ctx } from "./http";
 import { resumeProcessing } from "./recordings";
+import { mailEnabled } from "./mail";
+import { runReminders } from "./reminders";
 import { runRetention } from "./retention";
 import { ffmpegPath, resumeTranscodes } from "./transcode";
+import { resumeTranscriptions, whisperCli } from "./transcribe";
 import { registerAccountRoutes } from "./routes/account";
 import { registerAdminRoutes } from "./routes/admin";
+import { registerAttachmentRoutes } from "./routes/attachments";
+import { registerConsentLinkRoutes } from "./routes/consentLinks";
+import { registerExportRoutes } from "./routes/export";
+import { registerSearchRoutes } from "./routes/search";
+import { registerInsightRoutes } from "./routes/insights";
+import { canView, mustSetupTotp } from "./access";
 import { registerInterviewRoutes } from "./routes/interviews";
 import { registerRecordingRoutes } from "./routes/recordings";
 import { createStaticHandler } from "./static";
@@ -25,6 +34,9 @@ export type App = {
   listen(port?: number, host?: string): Promise<AddressInfo>;
   close(): Promise<void>;
 };
+
+/** 2段階認証を設定するまでの間も使える API */
+const TOTP_SETUP_PATHS = /^\/api\/(session|logout|health|me|me\/totp(\/[a-z]+)?|me\/password)$/;
 
 function setSecurityHeaders(res: ServerResponse): void {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -65,15 +77,31 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
     store,
     sessions: new Sessions(store, config.sessionTtlMs),
     limiter: new LoginLimiter(),
+    totpLimiter: new LoginLimiter(10, 30, 60 * 60_000, 10),
     audit: new Audit(path.join(store.dir, "audit")),
     jobs: new Jobs(),
     setup: { code: null },
     lastOrigin: null,
+    live: new Map(),
+    loginTickets: new Map(),
   };
   const log = opts.log ?? true;
 
   if (log) {
     console.log(ffmpegPath() ? "[server] ffmpeg あり: 再生用の MP4 を作成します(iPhone 等で再生可能)" : "[server] ffmpeg なし: 録画は WebM のまま配信します");
+    console.log(
+      whisperCli(ctx) && ffmpegPath()
+        ? `[server] whisper.cpp あり: 録画の音声を文字起こしします(モデル ${config.transcription.model}、サーバー内で処理)`
+        : "[server] whisper.cpp なし: 文字起こしは使えません",
+    );
+    console.log(
+      mailEnabled(ctx)
+        ? `[server] メール: ${config.mail.host}:${config.mail.port} から送信します(差出人 ${config.mail.from})`
+        : "[server] メール: SMTP_HOST・MAIL_FROM が未設定のため送信しません",
+    );
+    if (mailEnabled(ctx) && !config.appUrl) {
+      console.log("[server] メール: APP_URL が未設定のため、メールにはアプリへのリンクを載せません(APP_URL を設定してください)");
+    }
   }
 
   if (store.users.size === 0) {
@@ -89,10 +117,18 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
   registerInterviewRoutes(router, ctx);
   registerRecordingRoutes(router, ctx);
   registerAdminRoutes(router, ctx);
+  registerInsightRoutes(router, ctx);
+  registerAttachmentRoutes(router, ctx);
+  registerConsentLinkRoutes(router, ctx);
+  registerSearchRoutes(router, ctx);
+  registerExportRoutes(router, ctx);
 
   const serveStatic = config.staticDir ? createStaticHandler(config.staticDir) : null;
 
   async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL, c: Ctx): Promise<void> {
+    // 空の区切り(// や末尾の /)を含むパスは受け付けない。ルーターは空の区切りを無視して照合するため、
+    // パスの文字列で判定する処理(閲覧範囲など)をすり抜けられないように
+    if (/\/\/|.\/$/.test(url.pathname)) throw new HttpError(404, "見つかりません");
     const m = router.match(req.method ?? "GET", url.pathname);
     if (m === null) throw new HttpError(404, "見つかりません");
     if (m === "method-not-allowed") throw new HttpError(405, "このメソッドは使えません");
@@ -117,7 +153,18 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
     }
 
     if (m.route.auth !== "none" && !c.user) throw new HttpError(401, "ログインしてください");
+    // 管理者に2段階認証が必須なのに未設定なら、設定するまでほかの操作はさせない
+    if (c.user && mustSetupTotp(ctx, c.user) && !TOTP_SETUP_PATHS.test(url.pathname)) {
+      throw new HttpError(403, "管理者は2段階認証の設定が必要です。「アカウント」で設定してください");
+    }
     if (m.route.auth === "admin" && c.user?.role !== "admin") throw new HttpError(403, "管理者のみ実行できます");
+    // 面接ごとの API は、その面接を見られる人だけ(見られない面接は「見つからない」と同じ応答にする)。
+    // 判定は照合したルートの形(/api/interviews/:id…)で行う(パスの書き方の違いに左右されない)
+    const parts = m.route.parts;
+    if (c.user && parts[0] === "api" && parts[1] === "interviews" && parts[2] === ":id") {
+      const iv = store.interviews.get(c.params.id);
+      if (iv && !canView(ctx, c.user, iv)) throw new HttpError(404, "面接が見つかりません");
+    }
 
     const result = await m.route.handler(c);
     if (result === HANDLED || res.writableEnded) return;
@@ -184,9 +231,11 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
 
   await resumeProcessing(ctx);
   resumeTranscodes(ctx);
+  await resumeTranscriptions(ctx);
 
   let retentionTimer: ReturnType<typeof setInterval> | null = null;
   let retentionStartup: ReturnType<typeof setTimeout> | null = null;
+  let reminderTimer: ReturnType<typeof setInterval> | null = null;
 
   return {
     ctx,
@@ -204,12 +253,19 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
           );
           retentionStartup.unref?.();
           retentionTimer.unref?.();
+          // メールのお知らせ(評価の催促・前日のお知らせ)
+          reminderTimer = setInterval(
+            () => void runReminders(ctx).catch((e) => console.error("[reminders]", e)),
+            config.reminderIntervalMs,
+          );
+          reminderTimer.unref?.();
           resolve(server.address() as AddressInfo);
         });
       });
     },
     async close() {
       if (retentionTimer) clearInterval(retentionTimer);
+      if (reminderTimer) clearInterval(reminderTimer);
       if (retentionStartup) clearTimeout(retentionStartup);
       await new Promise<void>((resolve) => {
         server.close(() => resolve());

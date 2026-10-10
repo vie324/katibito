@@ -21,6 +21,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const uploads = useUploads();
   const pending = uploads.filter((u) => u.phase !== "done");
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     document.title = info?.orgName ? `面接記録 — ${info.orgName}` : "面接記録";
@@ -43,12 +44,32 @@ export function Layout({ children }: { children: ReactNode }) {
           <Link to="/" className={path === "/" ? "active" : ""}>
             面接一覧
           </Link>
+          <Link to="/calendar" className={path === "/calendar" ? "active" : ""}>
+            予定
+          </Link>
+          <Link to="/compare" className={path === "/compare" ? "active" : ""}>
+            比較
+          </Link>
+          <Link to="/search" className={`nav-search ${path === "/search" ? "active" : ""}`}>
+            さがす
+          </Link>
           {user?.role === "admin" && (
             <Link to="/settings" className={path === "/settings" ? "active" : ""}>
               設定
             </Link>
           )}
         </nav>
+        <form
+          className="bar-search"
+          role="search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const v = query.trim();
+            if (v) navigate(`/search?q=${encodeURIComponent(v)}`);
+          }}
+        >
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="さがす" aria-label="面接の中をさがす" maxLength={50} />
+        </form>
         <span className="spacer" />
         {pending.length > 0 && (
           <button className="quiet upload-indicator" onClick={() => setOpen((v) => !v)}>

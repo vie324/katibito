@@ -1,6 +1,7 @@
 // 初期設定・ログイン。
 
 import { useState, type FormEvent } from "react";
+import type { UserPublic } from "../../shared/types";
 import { api } from "../api";
 import { useRouter } from "../router";
 import { useSession } from "../session";
@@ -73,17 +74,73 @@ export function LoginPage() {
   const { navigate, search } = useRouter();
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
-  const { busy, error, run } = useAction();
+  const [ticket, setTicket] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const { busy, error, run, setError } = useAction();
+
+  const done = (user: UserPublic) => {
+    setUser(user);
+    const next = search.get("next");
+    navigate(next && next.startsWith("/") && !next.startsWith("//") ? next : "/", { force: true, replace: true });
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const res = await run(() => api.login(loginId, password));
-    if (res) {
-      setUser(res.user);
-      const next = search.get("next");
-      navigate(next && next.startsWith("/") && !next.startsWith("//") ? next : "/", { force: true, replace: true });
+    if (res?.ticket) {
+      setTicket(res.ticket);
+      setCode("");
+    } else if (res?.user) done(res.user);
+  };
+
+  const submitCode = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!ticket) return;
+    try {
+      const res = await run(() => api.loginTotp(ticket, code.trim()));
+      if (res) done(res.user);
+    } finally {
+      setCode("");
     }
   };
+
+  if (ticket) {
+    return (
+      <div className="center-page">
+        <form className="auth-card" onSubmit={submitCode}>
+          <h1>面接記録</h1>
+          <p className="muted">2段階認証</p>
+          <Field label="確認コード" hint="認証アプリに表示されている6桁の数字。スマートフォンが使えないときは、予備のコード(xxxx-xxxx)を入れてください">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={20}
+              autoFocus
+              required
+            />
+          </Field>
+          {error && <Notice kind="error">{error}</Notice>}
+          <button className="primary wide" disabled={busy}>
+            {busy ? "確認中" : "確認する"}
+          </button>
+          <button
+            type="button"
+            className="quiet wide"
+            onClick={() => {
+              setTicket(null);
+              setPassword("");
+              setError(null);
+            }}
+          >
+            ログインIDの入力に戻る
+          </button>
+          <p className="muted small">スマートフォンをなくした場合は、管理者に2段階認証の解除を依頼してください。</p>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="center-page">

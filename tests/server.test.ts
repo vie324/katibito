@@ -301,9 +301,10 @@ describe("運用の流れ(API)", () => {
     });
     expect(bad.status).toBe(400);
 
-    const stats = await bob.req("GET", "/api/stats/expression");
-    expect(stats.json.items).toHaveLength(1);
-    expect(stats.json.items[0].interviewId).toBe(iid);
+    // 比較一覧に計測値が出る
+    const cmp = await bob.req("GET", "/api/compare");
+    const row = cmp.json.rows.find((x: { id: string }) => x.id === iid);
+    expect(row.expression.expressiveness).toBeGreaterThan(0);
   });
 
   it("評価: 自分が提出するまで他の人の評価は見えない", async () => {

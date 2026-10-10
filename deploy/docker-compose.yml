@@ -13,6 +13,12 @@ services:
       TRUST_PROXY: "1"
       APP_URL: https://${DOMAIN}
       INITIAL_SETUP_CODE: ${INITIAL_SETUP_CODE:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small-q5_1}
       TZ: Asia/Tokyo
     volumes:
       - ./data:/data

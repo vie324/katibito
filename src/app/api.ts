@@ -2,16 +2,29 @@
 
 import type { ExpressionSummary } from "../analysis/expression";
 import type {
+  AttachmentMeta,
   AuditEntry,
-  ExpressionStats,
+  CompareRow,
+  ConsentLink,
+  ExpressionCompare,
   InterviewDetail,
   InterviewListItem,
+  LiveInfo,
   Marker,
   Note,
   NotesView,
+  NotifyPrefs,
+  PublicConsentInfo,
+  QuestionPlan,
+  RaterStats,
   RecordingMeta,
+  SearchResult,
   SessionInfo,
   Settings,
+  StorageUsage,
+  Transcript,
+  TranscriptionStatus,
+  UserAccount,
   UserPublic,
   Vote,
 } from "../shared/types";
@@ -106,10 +119,14 @@ export type ConsentInput = {
 
 export type InterviewInput = {
   candidate: { displayName: string; kana: string; age: number | null; minor: boolean; note: string };
+  round: string;
   scheduledAt: string | null;
   location: string;
   interviewerIds: string[];
-  questions: string[];
+  questions: QuestionPlan[];
+  templateId?: string;
+  /** 同じ候補者の次の面接として登録する(前の面接のID) */
+  fromInterviewId?: string;
 };
 
 export type EvaluationInput = {
@@ -124,23 +141,40 @@ export const api = {
   session: () => request<SessionInfo>("GET", "/api/session"),
   setup: (b: { setupCode: string; orgName: string; loginId: string; name: string; password: string }) =>
     request<{ user: UserPublic }>("POST", "/api/setup", b),
+  /** 2段階認証を設定している人は user の代わりに ticket が返る(確認コードを loginTotp で送る) */
   login: (loginId: string, password: string) =>
-    request<{ user: UserPublic }>("POST", "/api/login", { loginId, password }),
+    request<{ user?: UserPublic; totpRequired?: true; ticket?: string }>("POST", "/api/login", { loginId, password }),
+  loginTotp: (ticket: string, code: string) =>
+    request<{ user: UserPublic; recoveryRemaining: number }>("POST", "/api/login/totp", { ticket, code }),
+  totpStatus: () => request<{ enabled: boolean; enabledAt: string | null; recoveryRemaining: number }>("GET", "/api/me/totp"),
+  totpSetup: () => request<{ secret: string; uri: string }>("POST", "/api/me/totp/setup", {}),
+  totpEnable: (code: string, password: string) =>
+    request<{ recoveryCodes: string[] }>("POST", "/api/me/totp/enable", { code, password }),
+  totpRecovery: (code: string) => request<{ recoveryCodes: string[] }>("POST", "/api/me/totp/recovery", { code }),
+  totpDisable: (password: string) => request<{ ok: true }>("POST", "/api/me/totp/disable", { password }),
+  resetUserTotp: (id: string) => request<{ user: UserAccount }>("POST", `/api/users/${enc(id)}/totp/reset`, {}),
   logout: () => request<{ ok: true }>("POST", "/api/logout", {}),
   changePassword: (current: string, next: string) =>
     request<{ ok: true }>("POST", "/api/me/password", { current, next }),
 
   users: () => request<{ users: UserPublic[] }>("GET", "/api/users"),
-  createUser: (b: { loginId: string; name: string; role: string; password: string }) =>
-    request<{ user: UserPublic }>("POST", "/api/users", b),
-  updateUser: (id: string, b: Partial<{ name: string; role: string; disabled: boolean; password: string }>) =>
-    request<{ user: UserPublic }>("PATCH", `/api/users/${enc(id)}`, b),
+  adminUsers: () => request<{ users: UserAccount[] }>("GET", "/api/admin/users"),
+  createUser: (b: { loginId: string; name: string; role: string; password: string; email: string }) =>
+    request<{ user: UserAccount }>("POST", "/api/users", b),
+  updateUser: (id: string, b: Partial<{ name: string; role: string; disabled: boolean; password: string; email: string }>) =>
+    request<{ user: UserAccount }>("PATCH", `/api/users/${enc(id)}`, b),
+  me: () => request<{ user: UserAccount }>("GET", "/api/me"),
+  saveNotify: (b: { email?: string; notify?: NotifyPrefs }) => request<{ user: UserAccount }>("PUT", "/api/me/notify", b),
+  mailStatus: () => request<{ status: { enabled: boolean; host: string | null; from: string | null } }>("GET", "/api/admin/mail"),
+  sendTestMail: () => request<{ ok: true; to: string }>("POST", "/api/admin/mail/test", {}, { timeoutMs: 60_000 }),
 
   settings: () => request<{ settings: Settings }>("GET", "/api/settings"),
   saveSettings: (s: Settings) => request<{ settings: Settings }>("PUT", "/api/settings", s),
 
   interviews: () => request<{ interviews: InterviewListItem[] }>("GET", "/api/interviews"),
   createInterview: (b: InterviewInput) => request<InterviewDetail>("POST", "/api/interviews", b),
+  bulkCreateInterviews: (rows: Omit<InterviewInput, "questions" | "fromInterviewId">[]) =>
+    request<{ created: number; ids: string[] }>("POST", "/api/interviews/bulk", { rows }, { timeoutMs: 120_000 }),
   interview: (id: string) => request<InterviewDetail>("GET", iv(id)),
   updateInterview: (id: string, b: Partial<InterviewInput>) => request<InterviewDetail>("PATCH", iv(id), b),
   deleteInterview: (id: string) => request<{ ok: true }>("DELETE", iv(id)),
@@ -150,10 +184,35 @@ export const api = {
     request<InterviewDetail>("POST", `${iv(id)}/consent/withdraw`, { scope }),
 
   saveEvaluation: (id: string, b: EvaluationInput) => request<InterviewDetail>("PUT", `${iv(id)}/evaluations/me`, b),
-  addNote: (id: string, b: { recordingId: string | null; tMs: number | null; text: string }) =>
-    request<{ note: Note; notes: NotesView }>("POST", `${iv(id)}/notes`, b),
+  addNote: (
+    id: string,
+    b: { recordingId: string | null; tMs: number | null; text: string; kind?: "note" | "room"; live?: boolean },
+  ) => request<{ note: Note; notes: NotesView }>("POST", `${iv(id)}/notes`, b),
+  recordPrinted: (id: string, kind: "report" | "notice") => request<{ ok: true }>("POST", `${iv(id)}/printed`, { kind }),
+  roomMessages: (id: string, since: string | null) =>
+    request<{ messages: Note[] }>("GET", `${iv(id)}/room-messages${since ? `?since=${enc(since)}` : ""}`),
   deleteNote: (id: string, noteId: string) =>
     request<{ notes: NotesView }>("DELETE", `${iv(id)}/notes/${enc(noteId)}`),
+
+  uploadAttachment: (id: string, file: Blob, name: string, label: string) =>
+    request<{ attachment: AttachmentMeta; attachments: AttachmentMeta[] }>(
+      "POST",
+      `${iv(id)}/attachments?name=${enc(name)}&label=${enc(label)}`,
+      undefined,
+      { raw: file, timeoutMs: 5 * 60_000 },
+    ),
+  exportZipUrl: (id: string, applicant: boolean) => `${iv(id)}/export.zip${applicant ? "?scope=applicant" : ""}`,
+  attachmentUrl: (id: string, aid: string, download = false) => `${iv(id)}/attachments/${enc(aid)}${download ? "?download=1" : ""}`,
+  deleteAttachment: (id: string, aid: string) =>
+    request<{ attachments: AttachmentMeta[] }>("DELETE", `${iv(id)}/attachments/${enc(aid)}`),
+  createConsentLink: (id: string, days: number) =>
+    request<{ token: string; link: ConsentLink; detail: InterviewDetail }>("POST", `${iv(id)}/consent-links`, { days }),
+  revokeConsentLink: (id: string, lid: string) => request<InterviewDetail>("DELETE", `${iv(id)}/consent-links/${enc(lid)}`),
+  publicConsent: (token: string) => request<PublicConsentInfo>("GET", `/api/public/consent/${enc(token)}`),
+  submitPublicConsent: (
+    token: string,
+    b: { recording: boolean; analysis: boolean; candidateName: string; guardianName: string; guardianRelation: string; consentVersion: string },
+  ) => request<{ ok: true; recording: boolean; analysis: boolean }>("POST", `/api/public/consent/${enc(token)}`, b),
 
   decide: (id: string, result: Vote, reason: string) =>
     request<InterviewDetail>("PUT", `${iv(id)}/decision`, { result, reason }),
@@ -190,17 +249,32 @@ export const api = {
     }),
   trackGz: (id: string, rid: string) => request<ArrayBuffer>("GET", `${recPath(id, rid)}/track`),
   summary: (id: string, rid: string) => request<{ summary: ExpressionSummary }>("GET", `${recPath(id, rid)}/summary`),
+  transcript: (id: string, rid: string) => request<{ transcript: Transcript }>("GET", `${recPath(id, rid)}/transcript`),
+  requestTranscript: (id: string, rid: string) => request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/transcript`, {}),
   deleteRecording: (id: string, rid: string) => request<{ recording: RecordingMeta }>("DELETE", recPath(id, rid)),
   videoUrl: (id: string, rid: string) => `${recPath(id, rid)}/video`,
   mp4Url: (id: string, rid: string) => `${recPath(id, rid)}/video?format=mp4`,
+  liveHeartbeat: (id: string, rid: string, clientId: string, b: { elapsedMs: number; question: string | null }) =>
+    request<{ live: LiveInfo | null }>("POST", `${recPath(id, rid)}/live`, b, { clientId, timeoutMs: 10_000 }),
+  liveChunk: (id: string, rid: string, index: number, signal?: AbortSignal) =>
+    request<ArrayBuffer>("GET", `${recPath(id, rid)}/chunks/${index}`, undefined, { signal, timeoutMs: 30_000 }),
   abortRecording: (id: string, rid: string, clientId?: string) =>
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/abort`, {}, { clientId }),
   reprocessRecording: (id: string, rid: string) =>
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/reprocess`, {}),
 
-  stats: () => request<ExpressionStats>("GET", "/api/stats/expression"),
+  search: (q: string) => request<{ results: SearchResult[]; truncated: boolean }>("GET", `/api/search?q=${enc(q)}`),
+  expressionCompare: (id: string) => request<ExpressionCompare>("GET", `${iv(id)}/expression-compare`),
+  compare: () => request<{ rows: CompareRow[] }>("GET", "/api/compare"),
+  raterStats: () => request<{ raters: RaterStats[] }>("GET", "/api/stats/raters"),
+  /** 指定した面接だけの CSV(管理者) */
+  exportCsv: (ids: string[]) => request<ArrayBuffer>("POST", "/api/export/interviews.csv", { ids }, { timeoutMs: 120_000 }),
+  transcriptionStatus: () => request<{ status: TranscriptionStatus }>("GET", "/api/admin/transcription"),
+  prepareTranscription: () => request<{ status: TranscriptionStatus }>("POST", "/api/admin/transcription/prepare", {}),
+  storage: () => request<{ usage: StorageUsage }>("GET", "/api/admin/storage"),
   audit: (limit = 300) => request<{ entries: AuditEntry[] }>("GET", `/api/audit?limit=${limit}`),
-  runRetention: () => request<{ purged: number; staleRemoved: number }>("POST", "/api/admin/retention/run", {}),
+  runRetention: () =>
+    request<{ purged: number; staleRemoved: number; attachmentsPurged: number }>("POST", "/api/admin/retention/run", {}),
   exportCsvUrl: "/api/export/interviews.csv",
 };
 

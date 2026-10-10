@@ -92,7 +92,10 @@ export class LocalRecorder {
         mimeType,
         videoBitsPerSecond: this.opts.videoBitsPerSecond,
         audioBitsPerSecond: 64_000,
-      });
+        // 2秒ごとにキーフレーム: ライブで途中から見始めるとき・あとで再生位置を動かすときに速い
+        // (対応していないブラウザは無視する)
+        videoKeyFrameIntervalDuration: TIMESLICE_MS,
+      } as MediaRecorderOptions);
       this.rec = rec;
       rec.ondataavailable = (e) => {
         if (!e.data || e.data.size === 0) return;

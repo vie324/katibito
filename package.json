@@ -1,7 +1,7 @@
 {
   "name": "katibito-interview",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "面接の録画・表情の計測・面接官の評価と判定をまとめて扱う運用アプリ(対面面接向け)。行動シグナル解析デモ(/demo)を含む。",
   "type": "module",
   "scripts": {
@@ -24,6 +24,8 @@
     "@fontsource/biz-udpgothic": "^5.1.0",
     "@fontsource/jetbrains-mono": "^5.1.1",
     "@mediapipe/tasks-vision": "^0.10.14",
+    "nodemailer": "10.0.10",
+    "qrcode-generator": "^2.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

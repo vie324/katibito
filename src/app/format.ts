@@ -1,5 +1,7 @@
 // 表示用の整形(日時は日本時間で表示する)。
 
+import { formatClockMs } from "../shared/time";
+
 const TZ = "Asia/Tokyo";
 
 export function formatDateTime(iso: string | null | undefined): string {
@@ -24,14 +26,24 @@ export function formatDate(iso: string | null | undefined): string {
   return d.toLocaleDateString("ja-JP", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" });
 }
 
+/** 時刻だけ(14:32) */
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("ja-JP", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
+}
+
+/** 日本時間での日付(YYYY-MM-DD)。日付での絞り込み・予定表の日の区切りに使う */
+export function jstDateKey(t: string | Date): string {
+  const ms = typeof t === "string" ? Date.parse(t) : t.getTime();
+  return new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
+}
+
 /** 経過時間 m:ss / h:mm:ss */
 export function formatClock(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+  return formatClockMs(ms);
 }
 
 export function formatDuration(ms: number | null | undefined): string {

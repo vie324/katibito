@@ -3,14 +3,15 @@
 import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import { computeExpressionSummary, type ExpressionSummary } from "../src/analysis/expression";
+import { computeExpressionSummary, pickRepresentative, type ExpressionSummary } from "../src/analysis/expression";
 import { decodeFaceTrack, type FaceTrack } from "../src/analysis/faceTrack";
 import { INTERVIEW_ANALYSIS } from "../src/config/scoring";
-import type { Interview, RecordingMeta } from "../src/shared/types";
-import type { AppContext } from "./context";
+import type { Interview, LiveInfo, RecordingMeta } from "../src/shared/types";
+import { LIVE_STALE_MS, type AppContext } from "./context";
 import { concatFiles, extensionFor, isWebm } from "./media";
 import { notifyRecordingReady } from "./notifications";
 import { scheduleTranscode } from "./transcode";
+import { scheduleTranscription } from "./transcribe";
 import { writeJsonAtomic } from "./store";
 import { indexWebm } from "./webm";
 
@@ -38,9 +39,22 @@ export async function receivedChunks(ctx: AppContext, iid: string, rid: string):
   }
 }
 
+/** 録画中なら、その状態(心拍が途絶えていれば null) */
+export function liveInfo(ctx: AppContext, iid: string, rec: RecordingMeta, now = Date.now()): LiveInfo | null {
+  if (rec.status !== "uploading") return null;
+  const st = ctx.live.get(`${iid}/${rec.id}`);
+  if (!st || now - st.updatedAt > LIVE_STALE_MS) return null;
+  return {
+    startedAt: new Date(st.anchorMs).toISOString(),
+    elapsedMs: Math.max(0, now - st.anchorMs),
+    question: st.question,
+    updatedAt: new Date(st.updatedAt).toISOString(),
+  };
+}
+
 /** 応答に載せる録画メタ。端末側の録画ID(送信の合言葉)は含めない */
-export function publicRecording(rec: RecordingMeta): RecordingMeta {
-  return { ...rec, clientId: "" };
+export function publicRecording(rec: RecordingMeta, live: LiveInfo | null = null): RecordingMeta {
+  return { ...rec, clientId: "", live };
 }
 
 export function videoPath(ctx: AppContext, iid: string, rec: RecordingMeta): string | null {
@@ -138,6 +152,7 @@ export async function finalizeRecording(ctx: AppContext, iid: string, rid: strin
     const latest = ctx.store.interviews.get(iid);
     if (latest) void notifyRecordingReady(ctx, latest, updated);
     void scheduleTranscode(ctx, iid, rid);
+    void scheduleTranscription(ctx, iid, rid).catch((e) => console.warn(`[recordings] ${iid}/${rid}: 文字起こしを予約できません`, e));
   } catch (e) {
     console.error(`[recordings] ${iid}/${rid}: 仕上げに失敗`, e);
     await rm(raw, { force: true }).catch(() => undefined);
@@ -263,6 +278,19 @@ export async function loadSummary(
   }
   if (s) cacheOf(ctx).set(key, s);
   return s;
+}
+
+/** 面接の代表の集計(顔が最も長く映っていた録画)。比較・CSV で使う */
+export async function representativeSummary(ctx: AppContext, iid: string): Promise<ExpressionSummary | null> {
+  const iv = ctx.store.interviews.get(iid);
+  if (!iv) return null;
+  const summaries: ExpressionSummary[] = [];
+  for (const rec of iv.recordings) {
+    if (rec.analysis !== "ready") continue;
+    const s = await loadSummary(ctx, iid, rec).catch(() => null);
+    if (s) summaries.push(s);
+  }
+  return pickRepresentative(summaries);
 }
 
 /** 映像と顔トラックを消す。keepSummary = true なら集計(数値)は残す(保存期間による削除) */

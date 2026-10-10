@@ -4,15 +4,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ExpressionSummary } from "../../analysis/expression";
 import { decodeFaceTrack, encodeFaceTrack, typicalStepMs, type FaceTrack } from "../../analysis/faceTrack";
 import { buildTimelineSeries, type TimelineSeries } from "../../analysis/series";
-import type { ExpressionStats, InterviewDetail, Marker, RecordingMeta } from "../../shared/types";
+import type { ExpressionCompare, InterviewDetail, Marker, RecordingMeta } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { formatBytes, formatClock, formatDateTime, formatDuration } from "../format";
 import { FaceAnalysisRunner } from "../record/FaceAnalysisRunner";
 import { gunzipToBytes, gzipBytes } from "../record/localStore";
+import { useRouter } from "../router";
 import { useSession } from "../session";
 import { Notice, useConfirm, useToast } from "../ui";
 import { ExpressionSummaryView } from "./ExpressionSummaryView";
 import { ReviewTimeline } from "./ReviewTimeline";
+import { TranscriptPanel } from "./TranscriptPanel";
+import { Watermark, watermarkText } from "./Watermark";
 import { HighlightList, NotesList, SegmentTable } from "./SceneLists";
 
 const REC_STATUS: Record<RecordingMeta["status"], string> = {
@@ -24,22 +27,29 @@ const REC_STATUS: Record<RecordingMeta["status"], string> = {
   deleted: "削除済み",
 };
 
-type SideTab = "scenes" | "segments" | "notes" | "marks";
+type SideTab = "scenes" | "segments" | "transcript" | "notes" | "marks";
 
 export function ReviewPanel({
   detail,
   setDetail,
-  stats,
+  compare,
 }: {
   detail: InterviewDetail;
   setDetail: (d: InterviewDetail) => void;
-  stats: ExpressionStats | null;
+  compare: ExpressionCompare | null;
 }) {
-  const { user } = useSession();
+  const { user, info, settings } = useSession();
+  const { search } = useRouter();
   const toast = useToast();
   const iv = detail.interview;
   const recs = iv.recordings.filter((r) => r.status !== "deleted");
-  const [rid, setRid] = useState<string | null>(() => (recs.find((r) => r.status === "ready") ?? recs[0])?.id ?? null);
+  // 場面へのリンク(?rec=<録画ID>&t=<秒>)で開いたときは、その録画のその時刻から
+  const linkRec = search.get("rec");
+  const linkT = Number(search.get("t"));
+  const pendingSeek = useRef<number | null>(Number.isFinite(linkT) && linkT > 0 ? linkT * 1000 : null);
+  const [rid, setRid] = useState<string | null>(
+    () => (recs.find((r) => r.id === linkRec) ?? recs.find((r) => r.status === "ready") ?? recs[0])?.id ?? null,
+  );
   const rec = recs.find((r) => r.id === rid) ?? recs[0] ?? null;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -51,6 +61,18 @@ export function ReviewPanel({
   const [rate, setRate] = useState(1);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [confirmNode, confirm] = useConfirm();
+
+  // 開いたままの画面で場面へのリンクを押したとき(メモに貼られたリンクなど)
+  useEffect(() => {
+    const r = search.get("rec");
+    const t = Number(search.get("t"));
+    if (r && recs.some((x) => x.id === r) && r !== rid) setRid(r);
+    if (!Number.isFinite(t) || t <= 0) return;
+    const v = videoRef.current;
+    if (v && v.readyState >= 1 && (!r || r === rid)) v.currentTime = t;
+    else pendingSeek.current = t * 1000;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const analysisKey = rec ? `${rec.id}:${rec.analysis}:${rec.status}:${rec.durationMs}` : "";
   useEffect(() => {
@@ -228,22 +250,46 @@ export function ReviewPanel({
               <div className="review-video">
                 {/* 再生用 MP4(H.264)があれば先に。iPhone の Safari でも再生できる。
                     再生できない形式はブラウザが飛ばして次の候補(元の録画)を使う */}
-                <video
-                  key={`${rec.id}:${rec.mp4Ready}`}
-                  ref={videoRef}
-                  controls
-                  preload="metadata"
-                  playsInline
-                  onLoadedMetadata={(e) => {
-                    const d = e.currentTarget.duration;
-                    setVideoDuration(Number.isFinite(d) ? d * 1000 : null);
-                    e.currentTarget.playbackRate = rate;
-                  }}
-                >
-                  {rec.mp4Ready && <source src={api.mp4Url(iv.id, rec.id)} type='video/mp4; codecs="avc1.4D401F, mp4a.40.2"' />}
-                  <source src={api.videoUrl(iv.id, rec.id)} type={sourceType(rec.mimeType)} />
-                </video>
+                <div className="review-video-frame">
+                  <video
+                    key={`${rec.id}:${rec.mp4Ready}`}
+                    ref={videoRef}
+                    controls
+                    controlsList="nodownload noremoteplayback"
+                    disablePictureInPicture
+                    onContextMenu={(e) => e.preventDefault()}
+                    preload="metadata"
+                    playsInline
+                    onLoadedMetadata={(e) => {
+                      const d = e.currentTarget.duration;
+                      setVideoDuration(Number.isFinite(d) ? d * 1000 : null);
+                      e.currentTarget.playbackRate = rate;
+                      if (pendingSeek.current !== null && (!linkRec || linkRec === rec.id)) {
+                        e.currentTarget.currentTime = pendingSeek.current / 1000;
+                        pendingSeek.current = null;
+                      }
+                    }}
+                  >
+                    {rec.mp4Ready && <source src={api.mp4Url(iv.id, rec.id)} type='video/mp4; codecs="avc1.4D401F, mp4a.40.2"' />}
+                    <source src={api.videoUrl(iv.id, rec.id)} type={sourceType(rec.mimeType)} />
+                  </video>
+                  {settings?.security.watermark !== false && <Watermark text={watermarkText(user?.name)} />}
+                </div>
                 <div className="row-actions left">
+                  <button
+                    className="quiet small"
+                    title="この場面を開くリンクをコピーします(ログインした職員だけが開けます)"
+                    onClick={() => {
+                      const t = Math.floor((videoRef.current?.currentTime ?? 0));
+                      const url = `${window.location.origin}/interviews/${iv.id}?rec=${rec.id}&t=${t}`;
+                      void navigator.clipboard
+                        ?.writeText(url)
+                        .then(() => toast(`${formatClock(t * 1000)} の場面へのリンクをコピーしました`))
+                        .catch(() => window.prompt("この場面へのリンク", url));
+                    }}
+                  >
+                    この場面のリンク
+                  </button>
                   <span className="muted small">再生速度</span>
                   {[1, 1.5, 2].map((r) => (
                     <button
@@ -267,6 +313,11 @@ export function ReviewPanel({
                   <button className={`tab ${side === "segments" ? "active" : ""}`} onClick={() => setSide("segments")}>
                     質問ごと
                   </button>
+                  {rec.transcript !== "none" || info?.features.transcription ? (
+                    <button className={`tab ${side === "transcript" ? "active" : ""}`} onClick={() => setSide("transcript")}>
+                      文字起こし
+                    </button>
+                  ) : null}
                   <button className={`tab ${side === "notes" ? "active" : ""}`} onClick={() => setSide("notes")}>
                     メモ{detail.notes.notes.length > 0 ? ` ${detail.notes.notes.length}` : ""}
                   </button>
@@ -283,6 +334,17 @@ export function ReviewPanel({
                     ))}
                   {side === "segments" &&
                     (summary ? <SegmentTable summary={summary} onSeek={seek} /> : <div className="muted small pad">表情の計測データがありません。</div>)}
+                  {side === "transcript" && (
+                    <TranscriptPanel
+                      iid={iv.id}
+                      rec={rec}
+                      onSeek={seek}
+                      getTimeMs={getTimeMs}
+                      onChanged={(r) =>
+                        setDetail({ ...detail, interview: { ...iv, recordings: iv.recordings.map((x) => (x.id === r.id ? r : x)) } })
+                      }
+                    />
+                  )}
                   {side === "notes" && (
                     <NotesList
                       notes={notes}
@@ -316,7 +378,7 @@ export function ReviewPanel({
           )}
 
           {analysisError && <Notice kind="error">表情の計測結果を読み込めません: {analysisError}</Notice>}
-          {summary && <ExpressionSummaryView summary={summary} stats={stats} interviewId={iv.id} />}
+          {summary && <ExpressionSummaryView summary={summary} compare={compare} />}
 
           {!iv.consent?.analysis && (
             <Notice kind="info">表情の計測には同意を得ていないため、この録画は計測していません。</Notice>

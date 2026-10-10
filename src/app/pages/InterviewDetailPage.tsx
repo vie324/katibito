@@ -2,26 +2,63 @@
 
 import { useEffect, useState } from "react";
 import { pickRepresentative, type ExpressionSummary } from "../../analysis/expression";
-import type { ExpressionStats, InterviewDetail } from "../../shared/types";
+import type { ExpressionCompare, InterviewDetail } from "../../shared/types";
 import { api, errorMessage } from "../api";
+import { AttachmentsPanel } from "../detail/AttachmentsPanel";
+import { ConsentLinksPanel } from "../detail/ConsentLinksPanel";
 import { DecisionPanel } from "../detail/DecisionPanel";
 import { EvaluationPanel } from "../detail/EvaluationPanel";
+import { LivePanel } from "../detail/LivePanel";
 import { ReviewPanel } from "../detail/ReviewPanel";
+import { saveFile } from "../download";
 import { formatDateTime } from "../format";
+import { buildIcs, interviewEvent } from "../ics";
 import { Link, useRouter } from "../router";
 import { useSession } from "../session";
-import { Loading, Modal, Notice, StatusChip, useConfirm, useToast } from "../ui";
+import { Loading, Modal, Notice, StatusChip, useConfirm, useToast, VoteChip } from "../ui";
+
+/** 同じ候補者のほかの面接(一次・二次など) */
+function OtherRounds({ detail }: { detail: InterviewDetail }) {
+  const iv = detail.interview;
+  const all = [
+    ...detail.otherRounds,
+    { id: iv.id, round: iv.round, scheduledAt: iv.scheduledAt, createdAt: iv.createdAt, status: detail.status, decision: iv.decision?.result ?? null },
+  ].sort((a, b) => (a.scheduledAt ?? a.createdAt).localeCompare(b.scheduledAt ?? b.createdAt));
+  return (
+    <section className="panel rounds">
+      <div className="panel-title">この候補者の面接</div>
+      <ul className="round-list">
+        {all.map((r) => (
+          <li key={r.id} className={r.id === iv.id ? "current" : ""}>
+            {r.id === iv.id ? (
+              <span className="round-name">{r.round || "(段階なし)"}・この面接</span>
+            ) : (
+              <Link to={`/interviews/${r.id}`} className="round-name">
+                {r.round || "(段階なし)"}
+              </Link>
+            )}
+            <span className="muted small num">{formatDateTime(r.scheduledAt ?? r.createdAt)}</span>
+            <span className="spacer" />
+            {r.decision ? <VoteChip vote={r.decision} /> : <StatusChip status={r.status} />}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 export function InterviewDetailPage({ id }: { id: string }) {
-  const { user } = useSession();
+  const { user, info } = useSession();
   const { navigate } = useRouter();
   const toast = useToast();
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState<ExpressionStats | null>(null);
+  const [compare, setCompare] = useState<ExpressionCompare | null>(null);
   const [summary, setSummary] = useState<ExpressionSummary | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportAll, setExportAll] = useState(true);
   const [confirmNode, confirm] = useConfirm();
 
   useEffect(() => {
@@ -30,27 +67,34 @@ export function InterviewDetailPage({ id }: { id: string }) {
       .interview(id)
       .then((d) => alive && setDetail(d))
       .catch((e) => alive && setError(errorMessage(e)));
+    setCompare(null);
     api
-      .stats()
-      .then((s) => alive && setStats(s))
+      .expressionCompare(id)
+      .then((s) => alive && setCompare(s))
       .catch(() => undefined);
     return () => {
       alive = false;
     };
   }, [id]);
 
-  // 録画の受信・処理中は状態を追う
-  const processing = detail?.interview.recordings.some((r) => r.status === "uploading" || r.status === "processing");
+  // 録画の受信・処理中は状態を追う(まだ録画がない面接も、録画が始まったらライブで見られるように追う)
+  const processing = detail?.interview.recordings.some(
+    (r) => r.status === "uploading" || r.status === "processing" || r.transcript === "queued" || r.transcript === "running",
+  );
+  const waitingForRecording = !!detail && !detail.interview.decision && detail.interview.recordings.length === 0 && !!detail.interview.consent?.recording;
   useEffect(() => {
-    if (!processing) return;
-    const t = setInterval(() => {
-      api
-        .interview(id)
-        .then(setDetail)
-        .catch(() => undefined);
-    }, 5000);
+    if (!processing && !waitingForRecording) return;
+    const t = setInterval(
+      () => {
+        api
+          .interview(id)
+          .then(setDetail)
+          .catch(() => undefined);
+      },
+      processing ? 5000 : 15_000,
+    );
     return () => clearInterval(t);
-  }, [processing, id]);
+  }, [processing, waitingForRecording, id]);
 
   // 判定欄に出す表情の要約(顔が最も長く映っていた録画)
   const analysisKey = detail?.interview.recordings.map((r) => `${r.id}:${r.analysis}:${r.markers.length}`).join("|") ?? "";
@@ -78,8 +122,21 @@ export function InterviewDetailPage({ id }: { id: string }) {
   const c = iv.consent;
   const decided = !!iv.decision;
   const isAdmin = user?.role === "admin";
-  const canRecord = !decided && (!c || c.recording || iv.recordingDeclined);
+
+  const saveIcs = () => {
+    const planned = iv.questionMinutes.filter((m): m is number => typeof m === "number");
+    const ev = interviewEvent(
+      { ...iv, plannedMinutes: planned.length > 0 ? planned.reduce((a, b) => a + b, 0) : null },
+      { orgName: info?.orgName ?? "", interviewerNames: detail.interviewers.map((u) => u.name) },
+    );
+    if (!ev) return;
+    const name = iv.candidate.displayName.replace(/[\\/:*?"<>|]/g, "_");
+    saveFile(buildIcs([ev], "面接の予定"), `面接_${name}.ics`, "text/calendar;charset=utf-8");
+  };
   const activeRecs = iv.recordings.filter((r) => r.status !== "deleted");
+  const liveRec = iv.recordings.find((r) => r.live);
+  // ほかの端末で録画中のときは、録画の開始ボタンを出さない(同じ面接を2台で録らないように)
+  const canRecord = !decided && !liveRec && (!c || c.recording || iv.recordingDeclined);
 
   const deleteInterview = async () => {
     const ok = await confirm({
@@ -118,6 +175,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <div className="detail-title">
           <h2>{iv.candidate.displayName}</h2>
           {iv.candidate.kana && <span className="muted">{iv.candidate.kana}</span>}
+          {iv.round && <span className="badge">{iv.round}</span>}
           <StatusChip status={detail.status} />
         </div>
         <span className="spacer" />
@@ -134,6 +192,22 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <button className="quiet" onClick={() => navigate(`/interviews/${iv.id}/edit`)}>
           編集
         </button>
+        <button className="quiet" onClick={() => navigate(`/interviews/new?from=${iv.id}`)} title="同じ候補者の二次面接などを登録します">
+          次の面接を登録
+        </button>
+        <button className="quiet" onClick={() => navigate(`/interviews/${iv.id}/report`)} title="印刷・PDF 保存用の記録票">
+          記録票
+        </button>
+        {isAdmin && decided && (
+          <button className="quiet" onClick={() => navigate(`/interviews/${iv.id}/notice`)}>
+            合否通知書
+          </button>
+        )}
+        {isAdmin && (
+          <button className="quiet" onClick={() => setExportOpen(true)} title="記録・録画・書類を ZIP にまとめて保存します">
+            書き出す
+          </button>
+        )}
         {isAdmin && (
           <button className="quiet danger-text" onClick={() => void deleteInterview()}>
             削除
@@ -144,7 +218,17 @@ export function InterviewDetailPage({ id }: { id: string }) {
       <div className="detail-info">
         <span>
           <span className="muted">面接日時</span> {formatDateTime(iv.scheduledAt)}
+          {iv.scheduledAt && !decided && (
+            <button className="small-btn" title="カレンダーアプリに取り込めるファイル(.ics)を保存します" onClick={saveIcs}>
+              カレンダーに追加
+            </button>
+          )}
         </span>
+        {iv.templateName && (
+          <span>
+            <span className="muted">評価シート</span> {iv.templateName}
+          </span>
+        )}
         {iv.location && (
           <span>
             <span className="muted">場所</span> {iv.location}
@@ -171,7 +255,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
           <span>
             録画 <b>あり</b> ・ 表情の計測 <b>{c.analysis ? "あり" : "なし"}</b>
             <span className="muted small">
-              ({c.method === "paper" ? "紙の同意書" : "画面で取得"}・{c.obtainedByName}・{formatDateTime(c.obtainedAt)}
+              ({c.method === "paper" ? "紙の同意書" : c.method === "online" ? `オンラインで入力(${c.obtainedByName} がリンクを送付)` : `画面で取得・${c.obtainedByName}`}・{formatDateTime(c.obtainedAt)}
               {c.guardianName ? `・保護者 ${c.guardianName}${c.guardianRelation ? `(${c.guardianRelation})` : ""}` : ""})
             </span>
           </span>
@@ -199,10 +283,13 @@ export function InterviewDetailPage({ id }: { id: string }) {
         )}
       </div>
 
+      <ConsentLinksPanel detail={detail} setDetail={setDetail} />
+
       <div className="detail-grid">
         <div className="detail-main">
+          {liveRec && <LivePanel detail={detail} setDetail={setDetail} rec={liveRec} />}
           {activeRecs.length > 0 ? (
-            <ReviewPanel detail={detail} setDetail={setDetail} stats={stats} />
+            <ReviewPanel detail={detail} setDetail={setDetail} compare={compare} />
           ) : (
             <section className="panel pad empty-review">
               {iv.recordingDeclined ? (
@@ -220,6 +307,8 @@ export function InterviewDetailPage({ id }: { id: string }) {
           )}
         </div>
         <div className="detail-side">
+          {detail.otherRounds.length > 0 && <OtherRounds detail={detail} />}
+          <AttachmentsPanel detail={detail} setDetail={setDetail} />
           <EvaluationPanel detail={detail} setDetail={setDetail} />
           <DecisionPanel detail={detail} setDetail={setDetail} summary={summary} />
         </div>
@@ -231,6 +320,34 @@ export function InterviewDetailPage({ id }: { id: string }) {
             {c.consentText.split("\n").map((l, i) => (l.trim() === "" ? <br key={i} /> : <p key={i}>{l}</p>))}
           </div>
           <div className="muted small">版: {c.consentVersion}</div>
+        </Modal>
+      )}
+      {exportOpen && (
+        <Modal title="データを書き出す" onClose={() => setExportOpen(false)}>
+          <p>
+            面接の記録・同意・評価・メモ・録画・表情の集計・文字起こし・応募書類を、1つの ZIP ファイルにまとめて保存します。
+            本人・保護者から開示を求められたときや、記録の引き継ぎに使えます。
+          </p>
+          {detail.otherRounds.length > 0 && (
+            <label className="check">
+              <input type="checkbox" checked={exportAll} onChange={(e) => setExportAll(e.target.checked)} />
+              <span>同じ候補者のほかの面接({detail.otherRounds.length}件)も含める</span>
+            </label>
+          )}
+          <Notice kind="warn">個人情報を含みます。保存先・受け渡しの方法・廃棄に注意してください。書き出したことは操作ログに残ります。</Notice>
+          <div className="row-actions">
+            <button className="quiet" onClick={() => setExportOpen(false)}>
+              キャンセル
+            </button>
+            <a
+              className="button primary"
+              href={api.exportZipUrl(iv.id, exportAll && detail.otherRounds.length > 0)}
+              download
+              onClick={() => setExportOpen(false)}
+            >
+              ZIP を保存
+            </a>
+          </div>
         </Modal>
       )}
       {withdrawOpen && (

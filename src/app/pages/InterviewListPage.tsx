@@ -1,13 +1,15 @@
 // 面接一覧。自分の対応待ち(評価・判定)を上に出す。
 
 import { useEffect, useMemo, useState } from "react";
-import { STATUS_LABEL } from "../../shared/status";
+import { formatScore } from "../../shared/score";
+import { heldWithoutRecording, STATUS_LABEL } from "../../shared/status";
 import type { InterviewListItem, InterviewStatus } from "../../shared/types";
 import { api, errorMessage } from "../api";
-import { formatDateTime, formatDuration } from "../format";
+import { formatDateTime, formatDuration, formatTime, jstDateKey } from "../format";
 import { Link, useRouter } from "../router";
 import { useSession } from "../session";
-import { Empty, Loading, Notice, StatusChip, VoteChip } from "../ui";
+import { BulkImport } from "../components/BulkImport";
+import { Empty, Loading, Notice, StatusChip, useToast, VoteChip } from "../ui";
 
 type Filter = "all" | InterviewStatus;
 
@@ -18,6 +20,9 @@ export function InterviewListPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [reload, setReload] = useState(0);
+  const toast = useToast();
 
   useEffect(() => {
     let alive = true;
@@ -33,7 +38,7 @@ export function InterviewListPage() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [reload]);
 
   const names = useMemo(() => new Map(users.map((u) => [u.id, u.name])), [users]);
 
@@ -41,13 +46,21 @@ export function InterviewListPage() {
     if (!items || !user) return [];
     return items.filter((it) => {
       if (it.status === "decided") return false;
-      const material = it.readyRecordingCount > 0 || it.recordingDeclined;
+      const material = it.readyRecordingCount > 0 || heldWithoutRecording(it);
       const assigned = it.interviewerIds.includes(user.id);
       if (assigned && material && it.myEvaluation !== "submitted") return true;
       if (user.role === "admin" && it.status === "deciding") return true;
       return false;
     });
   }, [items, user]);
+
+  // 今日(日本時間)の面接。当日に録画・ライブ視聴へすぐ進めるように上に出す
+  const today = useMemo(() => {
+    const key = jstDateKey(new Date());
+    return (items ?? [])
+      .filter((it) => it.scheduledAt && jstDateKey(it.scheduledAt) === key)
+      .sort((a, b) => a.scheduledAt!.localeCompare(b.scheduledAt!));
+  }, [items]);
 
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: 0, scheduled: 0, uploading: 0, evaluating: 0, deciding: 0, decided: 0 };
@@ -74,13 +87,49 @@ export function InterviewListPage() {
       <div className="page-head">
         <h2>面接一覧</h2>
         <span className="spacer" />
+        {user?.role === "admin" && (
+          <button className="quiet" onClick={() => setBulkOpen(true)}>
+            まとめて登録
+          </button>
+        )}
         <button className="primary" onClick={() => navigate("/interviews/new")}>
           面接を登録
         </button>
       </div>
+      {bulkOpen && (
+        <BulkImport
+          onClose={() => setBulkOpen(false)}
+          onDone={(n) => {
+            setBulkOpen(false);
+            toast(`${n}件の面接を登録しました`);
+            setReload((x) => x + 1);
+          }}
+        />
+      )}
 
       {error && <Notice kind="error">{error}</Notice>}
       {!items && !error && <Loading />}
+
+      {today.length > 0 && (
+        <div className="panel today-panel">
+          <div className="panel-title">今日の面接</div>
+          {today.map((it) => (
+            <Link key={it.id} to={`/interviews/${it.id}`} className="todo-row">
+              <span className="num">{formatTime(it.scheduledAt)}</span>
+              <span className="todo-name">{it.candidate.displayName}</span>
+              <span className="muted small">{[it.round, it.location].filter(Boolean).join(" ・ ")}</span>
+              <span className="spacer" />
+              {it.live ? (
+                <span className="chip chip-live">● ライブ</span>
+              ) : it.decision ? (
+                <VoteChip vote={it.decision.result} />
+              ) : (
+                <StatusChip status={it.status} />
+              )}
+            </Link>
+          ))}
+        </div>
+      )}
 
       {todo.length > 0 && (
         <div className="panel todo">
@@ -143,7 +192,13 @@ export function InterviewListPage() {
                         <Link to={`/interviews/${it.id}`} onClick={(e) => e.stopPropagation()}>
                           {it.candidate.displayName}
                         </Link>
-                        {it.candidate.kana && <div className="muted small">{it.candidate.kana}</div>}
+                        {(it.candidate.kana || it.round) && (
+                          <div className="muted small">
+                            {it.candidate.kana}
+                            {it.candidate.kana && it.round ? " ・ " : ""}
+                            {it.round}
+                          </div>
+                        )}
                       </td>
                       <td className="small">
                         {it.interviewerIds.map((id) => names.get(id) ?? "—").join("・") || <span className="muted">未設定</span>}
@@ -173,10 +228,17 @@ export function InterviewListPage() {
                             {it.votes.fail > 0 && <span className="vote vote-fail">不合格 {it.votes.fail}</span>}
                           </div>
                         )}
+                        {it.score !== null && <div className="muted num">合計点 {formatScore(it.score)}</div>}
                         {it.myEvaluation === "draft" && <div className="muted">あなた: 下書き</div>}
                       </td>
                       <td className="nowrap">
-                        {it.decision ? <VoteChip vote={it.decision.result} /> : <StatusChip status={it.status} />}
+                        {it.live ? (
+                          <span className="chip chip-live">● ライブ</span>
+                        ) : it.decision ? (
+                          <VoteChip vote={it.decision.result} />
+                        ) : (
+                          <StatusChip status={it.status} />
+                        )}
                       </td>
                     </tr>
                   ))}

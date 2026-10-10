@@ -1,14 +1,16 @@
 // 設定の初期値。管理者が「設定」画面で変更できる。
 
-import type { Settings } from "./types";
+import { DEFAULT_NOTICES } from "./notice";
+import type { Criterion, InterviewTemplate, NotifyPrefs, QuestionPlan, Role, Settings } from "./types";
 
 export const DEFAULT_CONSENT_TITLE = "面接の録画と表情の計測についてのお願い";
 
 export const DEFAULT_CONSENT_BODY = `{団体名}では、面接の内容を、その場にいない担当者も含めて公平に確認するため、面接の様子をビデオで録画させていただきたいと考えています。
 
 1. 録画の目的
-・面接に同席できない担当者が、面接の様子を確認するため
+・面接に同席できない担当者が、面接の様子を確認するため(録画中に数秒遅れで見ることもあります)
 ・面接官どうしで、評価のすり合わせを行うため
+・録画の音声をコンピューターで文字にして(文字起こし)、確認に使うため。文字起こしは録画を保管しているサーバーの中で行い、外部のサービスには送りません
 
 2. 表情の計測について
 録画した映像から、笑顔や眉の動き、うなずきなどの「表情の動き」をコンピューターで数値にし、選考の参考資料のひとつとして使います。
@@ -19,7 +21,7 @@ export const DEFAULT_CONSENT_BODY = `{団体名}では、面接の内容を、�
 3. 録画データの取り扱い
 ・録画と計測結果を見ることができるのは、選考に関わる担当者だけです。
 ・第三者に提供することはありません。
-・録画は、選考の結果が決まってから{保存日数}日以内に削除します。表情の計測結果(数値)と評価の記録は、選考の記録として保管します。
+・録画(音声の文字起こしを含む)は、選考の結果が決まってから{保存日数}日以内に削除します。表情の計測結果(数値)と評価の記録は、選考の記録として保管します。
 
 4. 同意しない場合・あとから取り消す場合
 ・録画や計測に同意いただけない場合も、面接は通常どおり行います。同意しないことで不利になることはありません。
@@ -29,27 +31,59 @@ export const DEFAULT_CONSENT_BODY = `{団体名}では、面接の内容を、�
 
 export const DEFAULT_RATING_LABELS = ["不十分", "やや不十分", "標準", "良い", "非常に良い"];
 
+export const DEFAULT_CRITERIA: Criterion[] = [
+  { id: "manner", label: "あいさつ・マナー", description: "入退室、あいさつ、言葉づかい", weight: 1 },
+  { id: "response", label: "受け答え", description: "質問を理解し、自分の言葉で答えられているか", weight: 1 },
+  { id: "motivation", label: "意欲・熱意", description: "取り組みたいこと、目標の具体性", weight: 1 },
+  { id: "cooperation", label: "人柄・協調性", description: "周囲と関わる姿勢、素直さ", weight: 1 },
+  { id: "expression", label: "表現力", description: "伝え方、話の分かりやすさ", weight: 1 },
+];
+
+export const DEFAULT_QUESTIONS: QuestionPlan[] = [
+  { text: "自己紹介", minutes: 2 },
+  { text: "志望理由", minutes: 3 },
+  { text: "最近がんばったこと", minutes: 3 },
+  { text: "得意なこと・好きなこと", minutes: 3 },
+  { text: "最後に質問", minutes: 2 },
+];
+
+export const DEFAULT_TEMPLATE_ID = "standard";
+
+export function defaultTemplate(): InterviewTemplate {
+  return {
+    id: DEFAULT_TEMPLATE_ID,
+    name: "標準",
+    criteria: DEFAULT_CRITERIA.map((c) => ({ ...c })),
+    questions: DEFAULT_QUESTIONS.map((q) => ({ ...q })),
+    passLine: null,
+  };
+}
+
 export function defaultSettings(now = new Date().toISOString()): Settings {
   return {
     orgName: "",
     contact: "",
-    criteria: [
-      { id: "manner", label: "あいさつ・マナー", description: "入退室、あいさつ、言葉づかい" },
-      { id: "response", label: "受け答え", description: "質問を理解し、自分の言葉で答えられているか" },
-      { id: "motivation", label: "意欲・熱意", description: "取り組みたいこと、目標の具体性" },
-      { id: "cooperation", label: "人柄・協調性", description: "周囲と関わる姿勢、素直さ" },
-      { id: "expression", label: "表現力", description: "伝え方、話の分かりやすさ" },
-    ],
+    templates: [defaultTemplate()],
+    defaultTemplateId: DEFAULT_TEMPLATE_ID,
     ratingLabels: [...DEFAULT_RATING_LABELS],
-    defaultQuestions: ["自己紹介", "志望理由", "最近がんばったこと", "得意なこと・好きなこと", "最後に質問"],
     consent: { title: DEFAULT_CONSENT_TITLE, body: DEFAULT_CONSENT_BODY },
-    retention: { videoDaysAfterDecision: 90, videoDaysUndecided: 180 },
+    retention: { videoDaysAfterDecision: 90, videoDaysUndecided: 180, attachmentDaysAfterDecision: 365 },
     blindEvaluation: true,
     recording: { videoBitsPerSecond: 1_000_000, width: 1280, height: 720 },
     webhookUrl: null,
+    access: { interviewerScope: "all" },
+    transcription: { enabled: true },
+    notices: structuredClone(DEFAULT_NOTICES),
+    security: { watermark: true, requireTotpForAdmins: false },
+    reminders: { enabled: true, evaluationAfterHours: 24, dayBeforeHour: 17 },
     updatedAt: now,
     updatedBy: null,
   };
+}
+
+/** メールのお知らせの初期値(管理者は判定まわりとライブも受け取る) */
+export function defaultNotifyPrefs(role: Role): NotifyPrefs {
+  return { evaluation: true, dayBefore: true, live: role === "admin", admin: role === "admin" };
 }
 
 /** 録画画質の選択肢(設定画面) */

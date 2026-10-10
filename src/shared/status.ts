@@ -1,19 +1,35 @@
 // 面接の状態の導出(一覧・詳細で共通)。状態は保存せず、データから毎回求める。
 
-import type { Evaluation, Interview, InterviewStatus, Vote } from "./types";
+import type { ConsentRecord, Evaluation, Interview, InterviewStatus, Vote } from "./types";
 
 export function submittedEvaluations(evals: Iterable<Evaluation>): Evaluation[] {
   return [...evals].filter((e) => e.status === "submitted");
 }
 
-export function deriveStatus(interview: Interview, evals: Iterable<Evaluation>): InterviewStatus {
+type DeclineLike = {
+  recordingDeclined: boolean;
+  scheduledAt: string | null;
+  consent: { method: ConsentRecord["method"] } | null;
+};
+
+/**
+ * 録画を断られた面接が、録画なしで行われたとみなせるか(評価の材料になるか)。
+ * 事前のオンライン同意で断られた場合は、予定日時を過ぎるまでは面接の前なので材料にしない。
+ */
+export function heldWithoutRecording(iv: DeclineLike, now = Date.now()): boolean {
+  if (!iv.recordingDeclined) return false;
+  if (iv.consent?.method === "online" && iv.scheduledAt && Date.parse(iv.scheduledAt) > now) return false;
+  return true;
+}
+
+export function deriveStatus(interview: Interview, evals: Iterable<Evaluation>, now = Date.now()): InterviewStatus {
   if (interview.decision) return "decided";
   if (interview.recordings.some((r) => r.status === "uploading" || r.status === "processing")) {
     return "uploading";
   }
   const submitted = submittedEvaluations(evals);
   const hasMaterial =
-    interview.recordingDeclined ||
+    heldWithoutRecording(interview, now) ||
     interview.recordings.some((r) => r.status === "ready" || r.status === "purged") ||
     submitted.length > 0;
   if (!hasMaterial) return "scheduled";
