@@ -303,6 +303,61 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
     return buildDetail(app, iv, c.user!);
   });
 
+  // まとめて登録(管理者。表計算ソフトの一覧から)。1行でも誤りがあれば何も登録しない
+  r.post("/api/interviews/bulk", "admin", async (c) => {
+    const body = obj(await readJson(c, 2 * 1024 * 1024));
+    const rows = arr(body.rows, "登録する面接", 300, (x) => x);
+    if (rows.length === 0) throw new ValidationError("登録する面接がありません");
+    const now = new Date().toISOString();
+    const created: Interview[] = [];
+    const errors: string[] = [];
+    rows.forEach((raw, i) => {
+      try {
+        const o = obj(raw, `${i + 1}行目`);
+        if (o.templateId !== undefined && o.templateId !== null && !store.settings.templates.some((t) => t.id === o.templateId)) {
+          throw new ValidationError("評価シートが見つかりません");
+        }
+        const template = templateOf(store.settings, typeof o.templateId === "string" ? o.templateId : null);
+        const id0 = newId();
+        const iv: Interview = {
+          id: id0,
+          candidate: parseCandidate(o.candidate),
+          applicantId: id0,
+          round: str(o.round, "面接の段階", { max: 20, optional: true }),
+          scheduledAt: isoDate(o.scheduledAt, "面接日時"),
+          location: str(o.location, "場所", { max: 100, optional: true }),
+          interviewerIds: parseInterviewers(app, o.interviewerIds),
+          questions: template.questions.map((q) => q.text),
+          questionMinutes: template.questions.map((q) => q.minutes),
+          templateId: null,
+          templateName: "",
+          criteria: [],
+          passLine: null,
+          createdAt: now,
+          createdBy: c.user!.id,
+          updatedAt: now,
+          consent: null,
+          recordingDeclined: false,
+          recordings: [],
+          decision: null,
+          attachments: [],
+          consentLinks: [],
+        };
+        applyTemplate(iv, template);
+        created.push(iv);
+      } catch (e) {
+        if (!(e instanceof ValidationError)) throw e;
+        errors.push(`${i + 1}行目: ${e.message}`);
+      }
+    });
+    if (errors.length > 0) {
+      throw new ValidationError(`${errors.length}行に誤りがあるため、登録していません。${errors.slice(0, 5).join(" / ")}${errors.length > 5 ? " ほか" : ""}`);
+    }
+    for (const iv of created) await store.saveInterview(iv);
+    await audit(app, c, "interview_bulk_create", null, `${created.length} rows`);
+    return { created: created.length, ids: created.map((x) => x.id) };
+  });
+
   r.get("/api/interviews/:id", "user", async (c) => {
     const iv = getInterview(app, c.params.id);
     await auditView(app, c, "interview_view", iv.id);

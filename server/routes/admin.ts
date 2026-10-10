@@ -10,6 +10,7 @@ import { attachmentHeader, HANDLED, HttpError, readJson, type Ctx, type Router }
 import { ensureModels, transcriptionStatus } from "../transcribe";
 import { representativeSummary } from "../recordings";
 import { runRetention } from "../retention";
+import { storageUsage } from "../storage";
 import { audit } from "./interviews";
 
 function csvCell(v: unknown): string {
@@ -37,6 +38,8 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
     await audit(app, c, "transcription_prepare", null);
     return { status: await transcriptionStatus(app) };
   });
+
+  r.get("/api/admin/storage", "admin", async () => ({ usage: await storageUsage(app) }));
 
   r.get("/api/audit", "admin", async (c) => {
     const limit = int(c.query.get("limit") ?? undefined, "件数", { min: 1, max: 2000, optional: true }) ?? 300;

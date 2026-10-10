@@ -1103,3 +1103,83 @@ table.list td.center {
   margin: var(--space-2) 0;
   font-size: 15px;
 }
+
+/* ---------------------------------------------------------------- ディスクの使用状況 */
+
+.storage {
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+.storage h3 {
+  margin-top: 0;
+}
+.storage-bar {
+  position: relative;
+  height: 10px;
+  background: var(--panel-raised);
+  border: 1px solid var(--rule);
+  margin-bottom: var(--space-3);
+  max-width: 560px;
+}
+.storage-used,
+.storage-app {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+.storage-used {
+  background: var(--ink-faint);
+}
+.storage-app {
+  background: var(--signal-e);
+}
+.kv-table {
+  border-collapse: collapse;
+  max-width: 560px;
+  width: 100%;
+}
+.kv-table th,
+.kv-table td {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(42, 48, 56, 0.6);
+  font-weight: normal;
+  text-align: left;
+}
+.kv-table th {
+  color: var(--ink-dim);
+}
+
+/* ---------------------------------------------------------------- まとめて登録 */
+
+.bulk-import textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.bulk-preview {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--rule);
+}
+.bulk-preview td:nth-child(2),
+.bulk-preview td:nth-child(4) {
+  white-space: nowrap;
+}
+.bulk-preview tr.bulk-bad td {
+  background: rgba(199, 91, 57, 0.08);
+}
+label.button {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 10px 20px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--panel-raised);
+  color: var(--ink);
+}
+label.button:hover {
+  border-color: var(--ink-dim);
+}

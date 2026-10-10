@@ -21,6 +21,7 @@ import type {
   SearchResult,
   SessionInfo,
   Settings,
+  StorageUsage,
   Transcript,
   TranscriptionStatus,
   UserAccount,
@@ -171,6 +172,8 @@ export const api = {
 
   interviews: () => request<{ interviews: InterviewListItem[] }>("GET", "/api/interviews"),
   createInterview: (b: InterviewInput) => request<InterviewDetail>("POST", "/api/interviews", b),
+  bulkCreateInterviews: (rows: Omit<InterviewInput, "questions" | "fromInterviewId">[]) =>
+    request<{ created: number; ids: string[] }>("POST", "/api/interviews/bulk", { rows }, { timeoutMs: 120_000 }),
   interview: (id: string) => request<InterviewDetail>("GET", iv(id)),
   updateInterview: (id: string, b: Partial<InterviewInput>) => request<InterviewDetail>("PATCH", iv(id), b),
   deleteInterview: (id: string) => request<{ ok: true }>("DELETE", iv(id)),
@@ -267,6 +270,7 @@ export const api = {
   exportCsv: (ids: string[]) => request<ArrayBuffer>("POST", "/api/export/interviews.csv", { ids }, { timeoutMs: 120_000 }),
   transcriptionStatus: () => request<{ status: TranscriptionStatus }>("GET", "/api/admin/transcription"),
   prepareTranscription: () => request<{ status: TranscriptionStatus }>("POST", "/api/admin/transcription/prepare", {}),
+  storage: () => request<{ usage: StorageUsage }>("GET", "/api/admin/storage"),
   audit: (limit = 300) => request<{ entries: AuditEntry[] }>("GET", `/api/audit?limit=${limit}`),
   runRetention: () =>
     request<{ purged: number; staleRemoved: number; attachmentsPurged: number }>("POST", "/api/admin/retention/run", {}),

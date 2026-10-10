@@ -537,6 +537,20 @@ export type RaterStats = {
   medianSubmitHours: number | null;
 };
 
+/** ディスクの使用状況(バイト) */
+export type StorageUsage = {
+  recordings: number;
+  attachments: number;
+  /** 面接・評価・メモの記録 */
+  records: number;
+  /** 文字起こしのモデル */
+  models: number;
+  audit: number;
+  /** ディスクの空きと全体(調べられなければ null) */
+  free: number | null;
+  total: number | null;
+};
+
 /** 横断検索で見つかった箇所 */
 export type SearchHit = {
   kind: "candidate" | "note" | "evaluation" | "transcript";

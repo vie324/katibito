@@ -8,7 +8,8 @@ import { api, errorMessage } from "../api";
 import { formatDateTime, formatDuration, formatTime, jstDateKey } from "../format";
 import { Link, useRouter } from "../router";
 import { useSession } from "../session";
-import { Empty, Loading, Notice, StatusChip, VoteChip } from "../ui";
+import { BulkImport } from "../components/BulkImport";
+import { Empty, Loading, Notice, StatusChip, useToast, VoteChip } from "../ui";
 
 type Filter = "all" | InterviewStatus;
 
@@ -19,6 +20,9 @@ export function InterviewListPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [reload, setReload] = useState(0);
+  const toast = useToast();
 
   useEffect(() => {
     let alive = true;
@@ -34,7 +38,7 @@ export function InterviewListPage() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [reload]);
 
   const names = useMemo(() => new Map(users.map((u) => [u.id, u.name])), [users]);
 
@@ -83,10 +87,25 @@ export function InterviewListPage() {
       <div className="page-head">
         <h2>面接一覧</h2>
         <span className="spacer" />
+        {user?.role === "admin" && (
+          <button className="quiet" onClick={() => setBulkOpen(true)}>
+            まとめて登録
+          </button>
+        )}
         <button className="primary" onClick={() => navigate("/interviews/new")}>
           面接を登録
         </button>
       </div>
+      {bulkOpen && (
+        <BulkImport
+          onClose={() => setBulkOpen(false)}
+          onDone={(n) => {
+            setBulkOpen(false);
+            toast(`${n}件の面接を登録しました`);
+            setReload((x) => x + 1);
+          }}
+        />
+      )}
 
       {error && <Notice kind="error">{error}</Notice>}
       {!items && !error && <Loading />}

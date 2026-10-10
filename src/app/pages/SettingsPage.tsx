@@ -5,10 +5,10 @@ import { renderConsentText } from "../../shared/consent";
 import { DEFAULT_CONSENT_BODY, DEFAULT_CONSENT_TITLE, RECORDING_PRESETS } from "../../shared/defaults";
 import { DEFAULT_NOTICES, NOTICE_PLACEHOLDERS } from "../../shared/notice";
 import { VOTE_LABEL } from "../../shared/status";
-import type { AuditEntry, InterviewTemplate, NoticeTemplate, Settings, TranscriptionStatus, UserAccount, Vote } from "../../shared/types";
+import type { AuditEntry, InterviewTemplate, NoticeTemplate, Settings, StorageUsage, TranscriptionStatus, UserAccount, Vote } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { CriteriaEditor, QuestionPlanEditor } from "../components/TemplateEditors";
-import { formatDateTime } from "../format";
+import { formatBytes, formatDateTime } from "../format";
 import { Link } from "../router";
 import { useSession } from "../session";
 import { Field, Loading, Modal, Notice, useAction, useToast } from "../ui";
@@ -497,11 +497,71 @@ function NoticesTab({ draft, setDraft }: TabProps) {
   );
 }
 
+function StorageView() {
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api
+      .storage()
+      .then((r) => setUsage(r.usage))
+      .catch((e) => setError(errorMessage(e)));
+  }, []);
+  if (error) return <Notice kind="error">{error}</Notice>;
+  if (!usage) return <Loading label="使用量を調べています" />;
+  const used = usage.recordings + usage.attachments + usage.records + usage.models + usage.audit;
+  const low = usage.free !== null && (usage.free < 10 * 1024 ** 3 || (usage.total !== null && usage.free / usage.total < 0.1));
+  const rows: [string, number][] = [
+    ["録画(文字起こし・計測データを含む)", usage.recordings],
+    ["応募書類", usage.attachments],
+    ["面接・評価・メモの記録", usage.records],
+    ["文字起こしのモデル", usage.models],
+    ["操作ログ", usage.audit],
+  ];
+  return (
+    <div className="storage">
+      <h3>ディスクの使用状況</h3>
+      {usage.total !== null && usage.free !== null && (
+        <div className="storage-bar" title={`空き ${formatBytes(usage.free)} / 全体 ${formatBytes(usage.total)}`}>
+          <span className="storage-used" style={{ width: `${Math.min(100, ((usage.total - usage.free) / usage.total) * 100)}%` }} />
+          <span className="storage-app" style={{ width: `${Math.min(100, (used / usage.total) * 100)}%` }} />
+        </div>
+      )}
+      <table className="kv-table small">
+        <tbody>
+          {rows.map(([label, n]) => (
+            <tr key={label}>
+              <th>{label}</th>
+              <td className="num right">{n === 0 ? "なし" : formatBytes(n)}</td>
+            </tr>
+          ))}
+          <tr>
+            <th>このアプリの合計</th>
+            <td className="num right">{formatBytes(used)}</td>
+          </tr>
+          {usage.free !== null && (
+            <tr>
+              <th>ディスクの空き</th>
+              <td className={`num right ${low ? "warn-text" : ""}`}>{formatBytes(usage.free)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {low && (
+        <Notice kind="warn">
+          ディスクの空きが少なくなっています。録画の受信や仕上げに失敗することがあります(仕上げには録画の約3倍の空きが必要です)。
+          保存期間を短くするか、サーバーのディスクを増やしてください。
+        </Notice>
+      )}
+    </div>
+  );
+}
+
 function RetentionTab({ draft, setDraft }: TabProps) {
   const toast = useToast();
   const { busy, error, run } = useAction();
   return (
     <div className="panel pad form">
+      <StorageView />
       <Field label="判定が確定してから録画を消すまでの日数" hint="同意文の {保存日数} に入ります。映像と顔の時系列データを削除し、表情の集計(数値)と評価は残します">
         <input
           type="number"
