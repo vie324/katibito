@@ -18,6 +18,7 @@ import type {
   QuestionPlan,
   RaterStats,
   RecordingMeta,
+  SearchResult,
   SessionInfo,
   Settings,
   Transcript,
@@ -187,6 +188,7 @@ export const api = {
       undefined,
       { raw: file, timeoutMs: 5 * 60_000 },
     ),
+  exportZipUrl: (id: string, applicant: boolean) => `${iv(id)}/export.zip${applicant ? "?scope=applicant" : ""}`,
   attachmentUrl: (id: string, aid: string, download = false) => `${iv(id)}/attachments/${enc(aid)}${download ? "?download=1" : ""}`,
   deleteAttachment: (id: string, aid: string) =>
     request<{ attachments: AttachmentMeta[] }>("DELETE", `${iv(id)}/attachments/${enc(aid)}`),
@@ -248,6 +250,7 @@ export const api = {
   reprocessRecording: (id: string, rid: string) =>
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/reprocess`, {}),
 
+  search: (q: string) => request<{ results: SearchResult[]; truncated: boolean }>("GET", `/api/search?q=${enc(q)}`),
   expressionCompare: (id: string) => request<ExpressionCompare>("GET", `${iv(id)}/expression-compare`),
   compare: () => request<{ rows: CompareRow[] }>("GET", "/api/compare"),
   raterStats: () => request<{ raters: RaterStats[] }>("GET", "/api/stats/raters"),

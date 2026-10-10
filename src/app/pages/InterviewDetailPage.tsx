@@ -57,6 +57,8 @@ export function InterviewDetailPage({ id }: { id: string }) {
   const [summary, setSummary] = useState<ExpressionSummary | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportAll, setExportAll] = useState(true);
   const [confirmNode, confirm] = useConfirm();
 
   useEffect(() => {
@@ -202,6 +204,11 @@ export function InterviewDetailPage({ id }: { id: string }) {
           </button>
         )}
         {isAdmin && (
+          <button className="quiet" onClick={() => setExportOpen(true)} title="記録・録画・書類を ZIP にまとめて保存します">
+            書き出す
+          </button>
+        )}
+        {isAdmin && (
           <button className="quiet danger-text" onClick={() => void deleteInterview()}>
             削除
           </button>
@@ -313,6 +320,34 @@ export function InterviewDetailPage({ id }: { id: string }) {
             {c.consentText.split("\n").map((l, i) => (l.trim() === "" ? <br key={i} /> : <p key={i}>{l}</p>))}
           </div>
           <div className="muted small">版: {c.consentVersion}</div>
+        </Modal>
+      )}
+      {exportOpen && (
+        <Modal title="データを書き出す" onClose={() => setExportOpen(false)}>
+          <p>
+            面接の記録・同意・評価・メモ・録画・表情の集計・文字起こし・応募書類を、1つの ZIP ファイルにまとめて保存します。
+            本人・保護者から開示を求められたときや、記録の引き継ぎに使えます。
+          </p>
+          {detail.otherRounds.length > 0 && (
+            <label className="check">
+              <input type="checkbox" checked={exportAll} onChange={(e) => setExportAll(e.target.checked)} />
+              <span>同じ候補者のほかの面接({detail.otherRounds.length}件)も含める</span>
+            </label>
+          )}
+          <Notice kind="warn">個人情報を含みます。保存先・受け渡しの方法・廃棄に注意してください。書き出したことは操作ログに残ります。</Notice>
+          <div className="row-actions">
+            <button className="quiet" onClick={() => setExportOpen(false)}>
+              キャンセル
+            </button>
+            <a
+              className="button primary"
+              href={api.exportZipUrl(iv.id, exportAll && detail.otherRounds.length > 0)}
+              download
+              onClick={() => setExportOpen(false)}
+            >
+              ZIP を保存
+            </a>
+          </div>
         </Modal>
       )}
       {withdrawOpen && (

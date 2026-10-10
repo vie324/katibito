@@ -23,6 +23,7 @@ const NoticePage = lazy(() => import("./pages/NoticePage"));
 const ComparePage = lazy(() => import("./pages/ComparePage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const PublicConsentPage = lazy(() => import("./pages/PublicConsentPage"));
+const SearchPage = lazy(() => import("./pages/SearchPage"));
 
 export function Root() {
   return (
@@ -108,6 +109,7 @@ function AppRoutes() {
   else if ((m = matchPath("/interviews/:id/notice", path)) && user.role === "admin") page = <NoticePage id={m.id} />;
   else if ((m = matchPath("/interviews/:id", path))) page = <InterviewDetailPage id={m.id} />;
   else if (path === "/calendar") page = <CalendarPage />;
+  else if (path === "/search") page = <SearchPage />;
   else if (path === "/compare") page = <ComparePage />;
   else if (path === "/settings" && user.role === "admin") page = <SettingsPage />;
   else if (path === "/account") page = <AccountPage />;

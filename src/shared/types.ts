@@ -535,6 +535,28 @@ export type RaterStats = {
   medianSubmitHours: number | null;
 };
 
+/** 横断検索で見つかった箇所 */
+export type SearchHit = {
+  kind: "candidate" | "note" | "evaluation" | "transcript";
+  text: string;
+  /** 録画の場面(メモ・文字起こし) */
+  recordingId: string | null;
+  tMs: number | null;
+  /** 書いた人(メモ・評価) */
+  who: string | null;
+};
+
+export type SearchResult = {
+  interviewId: string;
+  candidate: { displayName: string; kana: string };
+  round: string;
+  scheduledAt: string | null;
+  createdAt: string;
+  /** 見つかった箇所の数(hits は先頭の数件だけ) */
+  total: number;
+  hits: SearchHit[];
+};
+
 export type AuditEntry = {
   ts: string;
   userId: string | null;

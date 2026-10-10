@@ -1,5 +1,7 @@
 // 表示用の整形(日時は日本時間で表示する)。
 
+import { formatClockMs } from "../shared/time";
+
 const TZ = "Asia/Tokyo";
 
 export function formatDateTime(iso: string | null | undefined): string {
@@ -41,11 +43,7 @@ export function jstDateKey(t: string | Date): string {
 /** 経過時間 m:ss / h:mm:ss */
 export function formatClock(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+  return formatClockMs(ms);
 }
 
 export function formatDuration(ms: number | null | undefined): string {

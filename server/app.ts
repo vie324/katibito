@@ -19,6 +19,8 @@ import { registerAccountRoutes } from "./routes/account";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerAttachmentRoutes } from "./routes/attachments";
 import { registerConsentLinkRoutes } from "./routes/consentLinks";
+import { registerExportRoutes } from "./routes/export";
+import { registerSearchRoutes } from "./routes/search";
 import { registerInsightRoutes } from "./routes/insights";
 import { canView } from "./access";
 import { registerInterviewRoutes } from "./routes/interviews";
@@ -110,6 +112,8 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
   registerInsightRoutes(router, ctx);
   registerAttachmentRoutes(router, ctx);
   registerConsentLinkRoutes(router, ctx);
+  registerSearchRoutes(router, ctx);
+  registerExportRoutes(router, ctx);
 
   const serveStatic = config.staticDir ? createStaticHandler(config.staticDir) : null;
 
