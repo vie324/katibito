@@ -190,7 +190,7 @@ export function registerConsentLinkRoutes(r: Router, app: AppContext): void {
       detail: `recording=${recording} analysis=${analysis} link=${result.link.id}`,
       ip: c.ip,
     });
-    void notifyConsentOnline(app, result.iv, recording);
+    void notifyConsentOnline(app, result.iv, recording, result.link.createdBy);
     return { ok: true, recording, analysis };
   });
 }

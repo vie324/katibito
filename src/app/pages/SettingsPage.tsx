@@ -5,7 +5,7 @@ import { renderConsentText } from "../../shared/consent";
 import { DEFAULT_CONSENT_BODY, DEFAULT_CONSENT_TITLE, RECORDING_PRESETS } from "../../shared/defaults";
 import { DEFAULT_NOTICES, NOTICE_PLACEHOLDERS } from "../../shared/notice";
 import { VOTE_LABEL } from "../../shared/status";
-import type { AuditEntry, InterviewTemplate, NoticeTemplate, Settings, TranscriptionStatus, UserPublic, Vote } from "../../shared/types";
+import type { AuditEntry, InterviewTemplate, NoticeTemplate, Settings, TranscriptionStatus, UserAccount, Vote } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { CriteriaEditor, QuestionPlanEditor } from "../components/TemplateEditors";
 import { formatDateTime } from "../format";
@@ -218,6 +218,8 @@ function FeaturesTab({ draft, setDraft }: TabProps) {
         </div>
       )}
 
+      <MailSection draft={draft} setDraft={setDraft} />
+
       <h3>映像の取り扱い</h3>
       <label className="check">
         <input
@@ -231,6 +233,86 @@ function FeaturesTab({ draft, setDraft }: TabProps) {
         </span>
       </label>
     </div>
+  );
+}
+
+function MailSection({ draft, setDraft }: TabProps) {
+  const [status, setStatus] = useState<{ enabled: boolean; host: string | null; from: string | null } | null>(null);
+  const [sending, setSending] = useState(false);
+  const toast = useToast();
+  const r = draft.reminders;
+  const set = (patch: Partial<Settings["reminders"]>) => setDraft({ ...draft, reminders: { ...r, ...patch } });
+
+  useEffect(() => {
+    api
+      .mailStatus()
+      .then((x) => setStatus(x.status))
+      .catch(() => undefined);
+  }, []);
+
+  const test = async () => {
+    setSending(true);
+    try {
+      const res = await api.sendTestMail();
+      toast(`${res.to} にテストメールを送りました`);
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      <h3>メールのお知らせ</h3>
+      <p className="muted small">
+        録画の共有(評価のお願い)・ライブの開始・評価がそろったとき・判定の確定・オンラインの同意をメールで知らせます。
+        受け取る内容は、各自が「アカウント」で選びます。メールには候補者の表示名・日時・リンクだけが載ります。
+      </p>
+      {status && (
+        <div className="feature-status">
+          {status.enabled ? (
+            <>
+              <span className="ok-text">● 送信できます</span>
+              <span className="muted small">
+                {status.host} ・ 差出人 {status.from}
+              </span>
+              <button className="quiet small" disabled={sending} onClick={() => void test()}>
+                {sending ? "送信中…" : "自分にテストメールを送る"}
+              </button>
+            </>
+          ) : (
+            <span className="warn-text small">
+              このサーバーではメールを送りません(環境変数 SMTP_HOST・MAIL_FROM などを設定してください。運用ガイド参照)
+            </span>
+          )}
+        </div>
+      )}
+      <label className="check">
+        <input type="checkbox" checked={r.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+        <span>評価の催促と、前日のお知らせを送る</span>
+      </label>
+      <div className="grid2">
+        <Field label="評価の催促までの時間" hint="録画が共有されてから、この時間たっても未提出なら催促します(24時間おき・最大3回)">
+          <select value={r.evaluationAfterHours} disabled={!r.enabled} onChange={(e) => set({ evaluationAfterHours: Number(e.target.value) })}>
+            {[6, 12, 24, 48, 72].map((h) => (
+              <option key={h} value={h}>
+                {h}時間後
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="前日のお知らせの時刻" hint="面接の前日のこの時刻以降に、担当の面接官へ送ります">
+          <select value={r.dayBeforeHour} disabled={!r.enabled} onChange={(e) => set({ dayBeforeHour: Number(e.target.value) })}>
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={h}>
+                {h}時
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+    </>
   );
 }
 
@@ -458,10 +540,27 @@ function RetentionTab({ draft, setDraft }: TabProps) {
 }
 
 function UsersTab() {
-  const { users, reloadUsers, user: me } = useSession();
+  const { reloadUsers, user: me } = useSession();
   const toast = useToast();
+  const [users, setUsers] = useState<UserAccount[] | null>(null);
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<UserPublic | null>(null);
+  const [editing, setEditing] = useState<UserAccount | null>(null);
+
+  const load = async () => {
+    try {
+      setUsers((await api.adminUsers()).users);
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    }
+  };
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const reload = async () => {
+    await Promise.all([load(), reloadUsers()]);
+  };
+  if (!users) return <Loading />;
 
   return (
     <div className="panel">
@@ -478,6 +577,7 @@ function UsersTab() {
             <tr>
               <th>氏名</th>
               <th>ログインID</th>
+              <th>メール</th>
               <th>権限</th>
               <th>状態</th>
               <th />
@@ -488,6 +588,7 @@ function UsersTab() {
               <tr key={u.id} className={u.disabled ? "dimmed" : ""}>
                 <td>{u.name}</td>
                 <td className="num">{u.loginId}</td>
+                <td className="small">{u.email || <span className="muted">未登録</span>}</td>
                 <td>{u.role === "admin" ? "管理者" : "面接官"}</td>
                 <td>{u.disabled ? "無効" : "有効"}</td>
                 <td className="right">
@@ -509,7 +610,7 @@ function UsersTab() {
         <UserForm
           onClose={() => setAdding(false)}
           onSaved={async () => {
-            await reloadUsers();
+            await reload();
             setAdding(false);
             toast("ユーザーを追加しました。ログインIDと初期パスワードを本人に伝えてください");
           }}
@@ -521,7 +622,7 @@ function UsersTab() {
           isSelf={editing.id === me?.id}
           onClose={() => setEditing(null)}
           onSaved={async () => {
-            await reloadUsers();
+            await reload();
             setEditing(null);
             toast("ユーザーを更新しました");
           }}
@@ -531,8 +632,9 @@ function UsersTab() {
   );
 }
 
-function UserForm({ user, isSelf, onClose, onSaved }: { user?: UserPublic; isSelf?: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+function UserForm({ user, isSelf, onClose, onSaved }: { user?: UserAccount; isSelf?: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [name, setName] = useState(user?.name ?? "");
+  const [email, setEmail] = useState(user?.email ?? "");
   const [loginId, setLoginId] = useState(user?.loginId ?? "");
   const [role, setRole] = useState<string>(user?.role ?? "interviewer");
   const [password, setPassword] = useState("");
@@ -542,14 +644,15 @@ function UserForm({ user, isSelf, onClose, onSaved }: { user?: UserPublic; isSel
   const submit = async () => {
     const ok = await run(async () => {
       if (user) {
-        const patch: Partial<{ name: string; role: string; disabled: boolean; password: string }> = {};
+        const patch: Partial<{ name: string; role: string; disabled: boolean; password: string; email: string }> = {};
         if (name !== user.name) patch.name = name;
+        if (email.trim() !== user.email) patch.email = email.trim();
         if (role !== user.role) patch.role = role;
         if (disabled !== user.disabled) patch.disabled = disabled;
         if (password) patch.password = password;
         return api.updateUser(user.id, patch);
       }
-      return api.createUser({ loginId, name, role, password });
+      return api.createUser({ loginId, name, role, password, email: email.trim() });
     });
     if (ok) await onSaved();
   };
@@ -565,6 +668,9 @@ function UserForm({ user, isSelf, onClose, onSaved }: { user?: UserPublic; isSel
             <input value={loginId} onChange={(e) => setLoginId(e.target.value)} maxLength={64} autoComplete="off" />
           </Field>
         )}
+        <Field label="メールアドレス" hint="お知らせのメールの宛先(任意)。本人も「アカウント」で変更できます">
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} autoComplete="off" />
+        </Field>
         <Field label="権限">
           <select value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="interviewer">面接官</option>
@@ -596,6 +702,14 @@ function UserForm({ user, isSelf, onClose, onSaved }: { user?: UserPublic; isSel
 
 const ACTION_LABEL: Record<string, string> = {
   setup: "初期設定",
+  notify_update: "お知らせの設定",
+  mail_test: "テストメール",
+  attachment_upload: "書類の添付",
+  attachment_view: "書類の閲覧",
+  attachment_delete: "書類の削除",
+  consent_link_create: "同意のリンク作成",
+  consent_link_revoke: "同意のリンク取り消し",
+  consent_online: "オンラインの同意",
   login: "ログイン",
   login_failed: "ログイン失敗",
   password_change: "パスワード変更",

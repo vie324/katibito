@@ -24,6 +24,21 @@ export type Config = {
   sessionTtlMs: number;
   /** 保存期間の削除処理の実行間隔 */
   retentionIntervalMs: number;
+  /** メール(SMTP)。host か from が未設定なら送らない */
+  mail: {
+    host: string | null;
+    port: number;
+    /** true: 最初から TLS(465 番) / false: STARTTLS(587 番など) */
+    secure: boolean;
+    /** STARTTLS を必須にする(暗号化できないサーバーには送らない)。テスト用の SMTP サーバー以外では true のまま */
+    requireTls: boolean;
+    user: string | null;
+    pass: string | null;
+    /** 差出人(例: 面接記録 <noreply@example.jp>) */
+    from: string | null;
+  };
+  /** お知らせ(催促・前日)を確かめる間隔 */
+  reminderIntervalMs: number;
   /** 文字起こし(whisper.cpp)。サーバー内で処理し、外部には送らない */
   transcription: {
     /** auto: whisper-cli が見つかれば使う / off: 使わない */
@@ -71,6 +86,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxTrackBytes: 64 * 1024 * 1024,
     sessionTtlMs: int(env.SESSION_DAYS, 14) * 24 * 3600_000,
     retentionIntervalMs: 6 * 3600_000,
+    mail: {
+      host: env.SMTP_HOST || null,
+      port: int(env.SMTP_PORT, bool(env.SMTP_SECURE, false) ? 465 : 587),
+      secure: bool(env.SMTP_SECURE, false) || env.SMTP_PORT === "465",
+      requireTls: bool(env.SMTP_REQUIRE_TLS, true),
+      user: env.SMTP_USER || null,
+      pass: env.SMTP_PASS || null,
+      from: env.MAIL_FROM || null,
+    },
+    reminderIntervalMs: 15 * 60_000,
     transcription: {
       mode: ["0", "false", "off", "no"].includes((env.TRANSCRIBE ?? "").toLowerCase()) ? "off" : "auto",
       cli: env.WHISPER_CLI || "whisper-cli",

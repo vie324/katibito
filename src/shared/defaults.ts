@@ -1,7 +1,7 @@
 // 設定の初期値。管理者が「設定」画面で変更できる。
 
 import { DEFAULT_NOTICES } from "./notice";
-import type { Criterion, InterviewTemplate, QuestionPlan, Settings } from "./types";
+import type { Criterion, InterviewTemplate, NotifyPrefs, QuestionPlan, Role, Settings } from "./types";
 
 export const DEFAULT_CONSENT_TITLE = "面接の録画と表情の計測についてのお願い";
 
@@ -75,9 +75,15 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     transcription: { enabled: true },
     notices: structuredClone(DEFAULT_NOTICES),
     security: { watermark: true, requireTotpForAdmins: false },
+    reminders: { enabled: true, evaluationAfterHours: 24, dayBeforeHour: 17 },
     updatedAt: now,
     updatedBy: null,
   };
+}
+
+/** メールのお知らせの初期値(管理者は判定まわりとライブも受け取る) */
+export function defaultNotifyPrefs(role: Role): NotifyPrefs {
+  return { evaluation: true, dayBefore: true, live: role === "admin", admin: role === "admin" };
 }
 
 /** 録画画質の選択肢(設定画面) */

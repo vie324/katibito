@@ -13,11 +13,17 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_TEMPLATE_ID, defaultSettings, defaultTemplate } from "../src/shared/defaults";
-import type { Criterion, Evaluation, Interview, InterviewTemplate, Note, Settings, UserPublic } from "../src/shared/types";
+import { DEFAULT_TEMPLATE_ID, defaultNotifyPrefs, defaultSettings, defaultTemplate } from "../src/shared/defaults";
+import type { Criterion, Evaluation, Interview, InterviewTemplate, Note, NotifyPrefs, Settings, UserAccount, UserPublic } from "../src/shared/types";
 import { ID_RE } from "../src/shared/validate";
 
-export type UserRecord = UserPublic & { passwordHash: string; passwordChangedAt: string };
+export type UserRecord = UserPublic & {
+  passwordHash: string;
+  passwordChangedAt: string;
+  /** お知らせを送るメールアドレス(空なら送らない) */
+  email: string;
+  notify: NotifyPrefs;
+};
 
 export type SessionRecord = {
   userId: string;
@@ -85,7 +91,10 @@ export class Store {
     await mkdir(path.join(this.dir, "audit"), { recursive: true });
 
     const users = (await readJsonFile<UserRecord[]>(path.join(this.dir, "users.json"))) ?? [];
-    for (const u of users) this.users.set(u.id, u);
+    for (const u of users) {
+      // v0.2 までの利用者にはメールの項目がない
+      this.users.set(u.id, { ...u, email: u.email ?? "", notify: { ...defaultNotifyPrefs(u.role), ...(u.notify ?? {}) } });
+    }
 
     const sessions =
       (await readJsonFile<Record<string, SessionRecord>>(path.join(this.dir, "sessions.json"))) ?? {};
@@ -146,6 +155,11 @@ export class Store {
     const key = loginId.toLowerCase();
     for (const u of this.users.values()) if (u.loginId.toLowerCase() === key) return u;
     return undefined;
+  }
+
+  /** 本人と管理者に見せる情報(メールアドレスとお知らせの設定を含む) */
+  accountView(u: UserRecord): UserAccount {
+    return { ...this.publicUser(u), email: u.email, notify: { ...u.notify } };
   }
 
   publicUser(u: UserRecord): UserPublic {
@@ -286,6 +300,7 @@ export function mergeSettings(saved: LegacySettings): Settings {
     recording: { ...d.recording, ...(saved.recording ?? {}) },
     access: { ...d.access, ...(saved.access ?? {}) },
     security: { ...d.security, ...(saved.security ?? {}) },
+    reminders: { ...d.reminders, ...(saved.reminders ?? {}) },
     transcription: { ...d.transcription, ...(saved.transcription ?? {}) },
     notices: { ...d.notices, ...(saved.notices ?? {}) },
     ratingLabels: saved.ratingLabels ?? d.ratingLabels,

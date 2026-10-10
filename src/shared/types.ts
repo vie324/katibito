@@ -12,6 +12,21 @@ export type UserPublic = {
   createdAt: string;
 };
 
+/** メールで受け取るお知らせ */
+export type NotifyPrefs = {
+  /** 担当の面接: 録画の共有(評価のお願い)・評価の催促・判定の確定 */
+  evaluation: boolean;
+  /** 担当の面接の前日のお知らせ */
+  dayBefore: boolean;
+  /** 録画(ライブ)が始まったとき */
+  live: boolean;
+  /** 管理者向け: 評価がそろって判定待ちになったとき・オンラインで同意が届いたとき */
+  admin: boolean;
+};
+
+/** 本人と管理者だけが見られる項目(メールアドレス・お知らせの設定)を含む利用者の情報 */
+export type UserAccount = UserPublic & { email: string; notify: NotifyPrefs };
+
 export type SessionInfo = {
   user: UserPublic | null;
   /** ユーザーが1人もいない(初期設定が必要) */
@@ -22,6 +37,8 @@ export type SessionInfo = {
   features: {
     /** 文字起こし(whisper.cpp があり、設定で有効) */
     transcription: boolean;
+    /** メールのお知らせ(サーバーで SMTP を設定済み) */
+    mail: boolean;
   };
 };
 
@@ -103,6 +120,15 @@ export type Settings = {
     watermark: boolean;
     /** 管理者に2段階認証を必須にする */
     requireTotpForAdmins: boolean;
+  };
+  /** メールでのお知らせ(サーバーで SMTP を設定した場合) */
+  reminders: {
+    /** 評価の催促と前日のお知らせを送る */
+    enabled: boolean;
+    /** 録画が共有されてから、この時間たっても評価が未提出なら催促する(最大3回・24時間おき) */
+    evaluationAfterHours: number;
+    /** 前日のお知らせを送る時刻(日本時間の時) */
+    dayBeforeHour: number;
   };
   updatedAt: string;
   updatedBy: string | null;

@@ -21,6 +21,7 @@ import type {
 } from "../../src/shared/types";
 import { averageScore } from "../../src/shared/score";
 import { arr, bool, id, int, isoDate, obj, oneOf, str, ValidationError } from "../../src/shared/validate";
+import { canView } from "../access";
 import type { AppContext } from "../context";
 import { HttpError, readJson, type Ctx, type Router } from "../http";
 import { notifyDecision, notifyEvaluationSubmitted } from "../notifications";
@@ -30,15 +31,7 @@ import { parseQuestionPlans } from "./account";
 
 const VOTES = ["pass", "hold", "fail"] as const;
 
-/**
- * この面接を見られるか。管理者はすべて。面接官は、設定で「担当の面接だけ」にしていれば
- * 面接官に選ばれた面接と自分が登録した面接だけ
- */
-export function canView(app: AppContext, user: UserRecord, iv: Interview): boolean {
-  if (user.role === "admin") return true;
-  if (app.store.settings.access.interviewerScope === "all") return true;
-  return iv.interviewerIds.includes(user.id) || iv.createdBy === user.id;
-}
+export { canView };
 
 export function getInterview(app: AppContext, iid: string): Interview {
   const iv = app.store.interviews.get(iid);

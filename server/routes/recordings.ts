@@ -171,7 +171,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
     app.live.set(key, { anchorMs, updatedAt: now, question, notified: prev?.notified ?? false });
     if (!prev?.notified) {
       app.live.get(key)!.notified = true;
-      void notifyLiveStarted(app, iv);
+      void notifyLiveStarted(app, iv, rec.createdBy);
     }
     return { live: liveInfo(app, iv.id, rec, now) };
   });

@@ -1,8 +1,8 @@
 // 認証・ユーザー・設定の API。
 
 import { APP_VERSION } from "../../src/config/flags";
-import { RECORDING_PRESETS } from "../../src/shared/defaults";
-import type { Criterion, InterviewTemplate, QuestionPlan, SessionInfo, Settings } from "../../src/shared/types";
+import { defaultNotifyPrefs, RECORDING_PRESETS } from "../../src/shared/defaults";
+import type { Criterion, InterviewTemplate, NotifyPrefs, QuestionPlan, Role, SessionInfo, Settings } from "../../src/shared/types";
 import {
   arr,
   bool,
@@ -18,6 +18,7 @@ import {
 import { burnPasswordCheck, hashPassword, SESSION_COOKIE, setupCodeMatches, verifyPassword } from "../auth";
 import type { AppContext } from "../context";
 import { HttpError, readJson, setCookie, type Ctx, type Router } from "../http";
+import { mailEnabled, mailStatus, sendMailOrThrow } from "../mail";
 import { isAllowedWebhookUrl } from "../notify";
 import { newId, type UserRecord } from "../store";
 import { ffmpegPath } from "../transcode";
@@ -38,6 +39,26 @@ function loginIdOf(v: unknown): string {
   return s;
 }
 
+/** メールアドレス(空でもよい)。見た目の確認だけ(届くかどうかはテストメールで確かめる) */
+const EMAIL_RE = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/;
+
+export function emailOf(v: unknown): string {
+  const s = str(v, "メールアドレス", { max: 254, optional: true }).trim();
+  if (s && !EMAIL_RE.test(s)) throw new ValidationError("メールアドレスの形式が正しくありません");
+  return s;
+}
+
+function notifyOf(v: unknown, current: NotifyPrefs): NotifyPrefs {
+  if (v === undefined || v === null) return current;
+  const o = obj(v, "お知らせの設定");
+  const pick = (k: keyof NotifyPrefs) => (o[k] === undefined ? current[k] : bool(o[k], "お知らせの設定"));
+  return { evaluation: pick("evaluation"), dayBefore: pick("dayBefore"), live: pick("live"), admin: pick("admin") };
+}
+
+function newUserFields(role: Role, email: string): Pick<UserRecord, "email" | "notify"> {
+  return { email, notify: defaultNotifyPrefs(role) };
+}
+
 export function registerAccountRoutes(r: Router, app: AppContext): void {
   const { store } = app;
 
@@ -50,6 +71,7 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     version: APP_VERSION,
     features: {
       transcription: !!c.user && store.settings.transcription.enabled && !!whisperCli(app) && !!ffmpegPath(),
+      mail: !!c.user && mailEnabled(app),
     },
   }));
 
@@ -79,6 +101,7 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
       createdAt: now,
       passwordHash: await hashPassword(pw),
       passwordChangedAt: now,
+      ...newUserFields("admin", ""),
     };
     // 非同期処理の間に別のリクエストで作られていないか再確認
     if (store.users.size > 0) throw new HttpError(409, "初期設定は完了しています");
@@ -133,7 +156,30 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     return { ok: true };
   });
 
+  // 自分のメールアドレスとお知らせの設定
+  r.get("/api/me", "user", (c) => ({ user: store.accountView(c.user!) }));
+
+  r.put("/api/me/notify", "user", async (c) => {
+    const body = obj(await readJson(c));
+    const email = body.email === undefined ? undefined : emailOf(body.email);
+    const user = await store.withLock(USERS_LOCK, async () => {
+      const u = store.users.get(c.user!.id);
+      if (!u) throw new HttpError(404, "ユーザーが見つかりません");
+      if (email !== undefined) u.email = email;
+      u.notify = notifyOf(body.notify, u.notify);
+      await store.saveUsers();
+      return u;
+    });
+    await app.audit.write({ userId: user.id, userName: user.name, action: "notify_update", interviewId: null, detail: null, ip: c.ip });
+    return { user: store.accountView(user) };
+  });
+
   // ---------------------------------------------------------------- ユーザー
+  // 管理者の画面用(メールアドレス・お知らせの設定を含む)
+  r.get("/api/admin/users", "admin", () => ({
+    users: [...store.users.values()].map((u) => store.accountView(u)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+  }));
+
   r.get("/api/users", "user", () => ({
     users: [...store.users.values()]
       .map((u) => store.publicUser(u))
@@ -146,6 +192,7 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     if (store.userByLogin(loginId)) throw new HttpError(409, "このログインIDは使われています");
     const name = str(body.name, "氏名", { max: 40, min: 1 });
     const role = oneOf(body.role, "権限", ["admin", "interviewer"] as const);
+    const email = emailOf(body.email);
     const passwordHash = await hashPassword(password(body.password, "初期パスワード"));
     const user = await store.withLock(USERS_LOCK, async () => {
       // ハッシュ計算の間に同じログインIDで作られていないか(二重送信)を確かめ直す
@@ -160,13 +207,14 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
         createdAt: now,
         passwordHash,
         passwordChangedAt: now,
+        ...newUserFields(role, email),
       };
       store.users.set(user.id, user);
       await store.saveUsers();
       return user;
     });
     await app.audit.write({ userId: c.user!.id, userName: c.user!.name, action: "user_create", interviewId: null, detail: `${user.loginId} (${user.role})`, ip: c.ip });
-    return { user: store.publicUser(user) };
+    return { user: store.accountView(user) };
   });
 
   r.patch("/api/users/:id", "admin", async (c) => {
@@ -176,6 +224,7 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
     const name = body.name === undefined ? undefined : str(body.name, "氏名", { max: 40, min: 1 });
     const role = body.role === undefined ? undefined : oneOf(body.role, "権限", ["admin", "interviewer"] as const);
     const disabled = body.disabled === undefined ? undefined : bool(body.disabled, "無効化");
+    const email = body.email === undefined ? undefined : emailOf(body.email);
     const passwordHash =
       body.password === undefined ? undefined : await hashPassword(password(body.password, "新しいパスワード"));
 
@@ -206,12 +255,33 @@ export function registerAccountRoutes(r: Router, app: AppContext): void {
         user.passwordChangedAt = new Date().toISOString();
         changes.push("password");
       }
+      if (email !== undefined && email !== user.email) {
+        user.email = email;
+        changes.push("email");
+      }
       await store.saveUsers();
       if (disabled || passwordHash !== undefined) app.sessions.destroyUser(user.id);
       return { user, changes };
     });
     await app.audit.write({ userId: c.user!.id, userName: c.user!.name, action: "user_update", interviewId: null, detail: `${user.loginId}: ${changes.join(", ")}`, ip: c.ip });
-    return { user: store.publicUser(user) };
+    return { user: store.accountView(user) };
+  });
+
+  // ---------------------------------------------------------------- メール
+  r.get("/api/admin/mail", "admin", () => ({ status: mailStatus(app) }));
+
+  // 自分のアドレスにテストメールを送る(SMTP の設定を確かめる)
+  r.post("/api/admin/mail/test", "admin", async (c) => {
+    const me = c.user!;
+    if (!mailEnabled(app)) throw new HttpError(409, "サーバーでメール(SMTP)が設定されていません");
+    if (!me.email) throw new HttpError(409, "先に「アカウント」で自分のメールアドレスを登録してください");
+    try {
+      await sendMailOrThrow(app, me.email, "テストメール", `${me.name} さん\n\nメールの設定ができています。このメールに返信する必要はありません。`);
+    } catch (e) {
+      throw new HttpError(502, `送信できませんでした: ${(e as Error).message}`);
+    }
+    await app.audit.write({ userId: me.id, userName: me.name, action: "mail_test", interviewId: null, detail: null, ip: c.ip });
+    return { ok: true, to: me.email };
   });
 
   // ---------------------------------------------------------------- 設定
@@ -356,6 +426,16 @@ export function parseSettings(body: Record<string, unknown>, current: Settings):
       return {
         watermark: bool(sec.watermark, "透かしの設定", current.security.watermark),
         requireTotpForAdmins: bool(sec.requireTotpForAdmins, "管理者の2段階認証", current.security.requireTotpForAdmins),
+      };
+    })(),
+    reminders: (() => {
+      if (body.reminders === undefined) return current.reminders;
+      const rem = obj(body.reminders, "お知らせ");
+      return {
+        enabled: bool(rem.enabled, "お知らせの設定", current.reminders.enabled),
+        evaluationAfterHours:
+          int(rem.evaluationAfterHours, "評価の催促までの時間", { min: 1, max: 24 * 14, optional: true }) ?? current.reminders.evaluationAfterHours,
+        dayBeforeHour: int(rem.dayBeforeHour, "前日のお知らせの時刻", { min: 0, max: 23, optional: true }) ?? current.reminders.dayBeforeHour,
       };
     })(),
   };

@@ -13,6 +13,7 @@ import type {
   Marker,
   Note,
   NotesView,
+  NotifyPrefs,
   PublicConsentInfo,
   QuestionPlan,
   RaterStats,
@@ -21,6 +22,7 @@ import type {
   Settings,
   Transcript,
   TranscriptionStatus,
+  UserAccount,
   UserPublic,
   Vote,
 } from "../shared/types";
@@ -144,10 +146,15 @@ export const api = {
     request<{ ok: true }>("POST", "/api/me/password", { current, next }),
 
   users: () => request<{ users: UserPublic[] }>("GET", "/api/users"),
-  createUser: (b: { loginId: string; name: string; role: string; password: string }) =>
-    request<{ user: UserPublic }>("POST", "/api/users", b),
-  updateUser: (id: string, b: Partial<{ name: string; role: string; disabled: boolean; password: string }>) =>
-    request<{ user: UserPublic }>("PATCH", `/api/users/${enc(id)}`, b),
+  adminUsers: () => request<{ users: UserAccount[] }>("GET", "/api/admin/users"),
+  createUser: (b: { loginId: string; name: string; role: string; password: string; email: string }) =>
+    request<{ user: UserAccount }>("POST", "/api/users", b),
+  updateUser: (id: string, b: Partial<{ name: string; role: string; disabled: boolean; password: string; email: string }>) =>
+    request<{ user: UserAccount }>("PATCH", `/api/users/${enc(id)}`, b),
+  me: () => request<{ user: UserAccount }>("GET", "/api/me"),
+  saveNotify: (b: { email?: string; notify?: NotifyPrefs }) => request<{ user: UserAccount }>("PUT", "/api/me/notify", b),
+  mailStatus: () => request<{ status: { enabled: boolean; host: string | null; from: string | null } }>("GET", "/api/admin/mail"),
+  sendTestMail: () => request<{ ok: true; to: string }>("POST", "/api/admin/mail/test", {}, { timeoutMs: 60_000 }),
 
   settings: () => request<{ settings: Settings }>("GET", "/api/settings"),
   saveSettings: (s: Settings) => request<{ settings: Settings }>("PUT", "/api/settings", s),

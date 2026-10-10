@@ -10,6 +10,8 @@ import type { Config } from "./config";
 import { Jobs, type AppContext } from "./context";
 import { HANDLED, HttpError, parseCookies, Router, sendError, sendJson, type Ctx } from "./http";
 import { resumeProcessing } from "./recordings";
+import { mailEnabled } from "./mail";
+import { runReminders } from "./reminders";
 import { runRetention } from "./retention";
 import { ffmpegPath, resumeTranscodes } from "./transcode";
 import { resumeTranscriptions, whisperCli } from "./transcribe";
@@ -18,7 +20,8 @@ import { registerAdminRoutes } from "./routes/admin";
 import { registerAttachmentRoutes } from "./routes/attachments";
 import { registerConsentLinkRoutes } from "./routes/consentLinks";
 import { registerInsightRoutes } from "./routes/insights";
-import { canView, registerInterviewRoutes } from "./routes/interviews";
+import { canView } from "./access";
+import { registerInterviewRoutes } from "./routes/interviews";
 import { registerRecordingRoutes } from "./routes/recordings";
 import { createStaticHandler } from "./static";
 import { Store } from "./store";
@@ -83,6 +86,11 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
       whisperCli(ctx) && ffmpegPath()
         ? `[server] whisper.cpp あり: 録画の音声を文字起こしします(モデル ${config.transcription.model}、サーバー内で処理)`
         : "[server] whisper.cpp なし: 文字起こしは使えません",
+    );
+    console.log(
+      mailEnabled(ctx)
+        ? `[server] メール: ${config.mail.host}:${config.mail.port} から送信します(差出人 ${config.mail.from})`
+        : "[server] メール: SMTP_HOST・MAIL_FROM が未設定のため送信しません",
     );
   }
 
@@ -206,6 +214,7 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
 
   let retentionTimer: ReturnType<typeof setInterval> | null = null;
   let retentionStartup: ReturnType<typeof setTimeout> | null = null;
+  let reminderTimer: ReturnType<typeof setInterval> | null = null;
 
   return {
     ctx,
@@ -223,12 +232,19 @@ export async function createApp(config: Config, opts: { log?: boolean } = {}): P
           );
           retentionStartup.unref?.();
           retentionTimer.unref?.();
+          // メールのお知らせ(評価の催促・前日のお知らせ)
+          reminderTimer = setInterval(
+            () => void runReminders(ctx).catch((e) => console.error("[reminders]", e)),
+            config.reminderIntervalMs,
+          );
+          reminderTimer.unref?.();
           resolve(server.address() as AddressInfo);
         });
       });
     },
     async close() {
       if (retentionTimer) clearInterval(retentionTimer);
+      if (reminderTimer) clearInterval(reminderTimer);
       if (retentionStartup) clearTimeout(retentionStartup);
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
