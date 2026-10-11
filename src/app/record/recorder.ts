@@ -30,6 +30,8 @@ export type RecorderOptions = {
   candidateName: string;
   analysisAllowed: boolean;
   videoBitsPerSecond: number;
+  /** 映像の元(screen = Google Meet のタブなどの画面の共有) */
+  capture: "camera" | "screen";
 };
 
 export class LocalRecorder {
@@ -45,6 +47,11 @@ export class LocalRecorder {
   private stopped = false;
   private releaseLock: (() => void) | null = null;
   onWarning: ((msg: string) => void) | null = null;
+  /**
+   * 2秒ごとのチャンクが届くたびに呼ぶ。録画の仕組みが出す合図なので、
+   * この画面が裏に回ってタイマーが間引かれている間も、ほぼ時間どおりに届く
+   */
+  onChunk: ((index: number) => void) | null = null;
 
   constructor(
     private readonly stream: MediaStream,
@@ -61,6 +68,7 @@ export class LocalRecorder {
       interviewId: this.opts.interviewId,
       candidateName: this.opts.candidateName,
       source: "live",
+      capture: this.opts.capture,
       mimeType,
       startedAt: now,
       endedAt: null,
@@ -103,6 +111,11 @@ export class LocalRecorder {
         this.bytes += e.data.size;
         const blob = e.data;
         this.writes = this.writes.then(() => this.persistChunk(i, blob));
+        try {
+          this.onChunk?.(i);
+        } catch {
+          // 合図の処理の失敗で録画を止めない
+        }
       };
       rec.onerror = (e) => {
         const err = (e as unknown as { error?: Error }).error;

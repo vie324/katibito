@@ -150,7 +150,10 @@ export default function CalendarPage() {
                       {formatTime(it.scheduledAt)}
                       {end && <span className="muted">–{end}</span>}
                     </div>
-                    <div className="cal-name">{it.candidate.displayName}</div>
+                    <div className="cal-name">
+                      {it.candidate.displayName}
+                      {it.format === "online" && <span className="online-tag">オンライン</span>}
+                    </div>
                     {(it.round || it.location) && <div className="muted small">{[it.round, it.location].filter(Boolean).join(" ・ ")}</div>}
                     <div className="muted small">{it.interviewerIds.map((id) => names.get(id) ?? "—").join("・") || "面接官 未設定"}</div>
                     <div className="cal-status">
@@ -170,6 +173,7 @@ export default function CalendarPage() {
           {undated.map((it) => (
             <Link key={it.id} to={`/interviews/${it.id}`} className="todo-row">
               <span className="todo-name">{it.candidate.displayName}</span>
+              {it.format === "online" && <span className="online-tag">オンライン</span>}
               {it.round && <span className="muted">{it.round}</span>}
               <span className="spacer" />
               <span className="muted small">日時を入れると予定に表示されます</span>

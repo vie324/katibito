@@ -4,6 +4,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { pickRepresentative, type ExpressionSummary } from "../../analysis/expression";
 import { formatMetric, METRIC_META, PRIMARY_METRICS, QUALITY_LABEL } from "../../analysis/metricsMeta";
+import { CONSENT_METHOD_LABEL } from "../../shared/consent";
+import { placeLabel } from "../../shared/meet";
 import { averageScore, criterionAverages, formatScore, weightedScore } from "../../shared/score";
 import { STATUS_LABEL, VOTE_LABEL } from "../../shared/status";
 import type { Evaluation, InterviewDetail, Note, Transcript, Vote } from "../../shared/types";
@@ -128,7 +130,7 @@ export default function ReportPage({ id }: { id: string }) {
                 <td>
                   {iv.round ? `${iv.round} ・ ` : ""}
                   {formatDateTime(iv.scheduledAt ?? iv.createdAt)}
-                  {iv.location ? ` ・ ${iv.location}` : ""}
+                  {placeLabel(iv) ? ` ・ ${placeLabel(iv)}` : ""}
                 </td>
               </tr>
               <tr>
@@ -149,7 +151,7 @@ export default function ReportPage({ id }: { id: string }) {
                   {!c
                     ? "未取得"
                     : c.recording
-                      ? `録画 あり ・ 表情の計測 ${c.analysis ? "あり" : "なし"}(${c.method === "paper" ? "紙の同意書" : c.method === "online" ? "オンライン" : "画面で取得"}・${formatDate(c.obtainedAt)}${c.guardianName ? `・保護者 ${c.guardianName}` : ""})`
+                      ? `録画 あり ・ 表情の計測 ${c.analysis ? "あり" : "なし"}(${CONSENT_METHOD_LABEL[c.method]}・${formatDate(c.obtainedAt)}${c.guardianName ? `・保護者 ${c.guardianName}` : ""})`
                       : "録画なし(同意を得られなかったため)"}
                   {c?.withdrawnAt ? ` ・ ${formatDate(c.withdrawnAt)} に取り消し(${c.withdrawnScope === "all" ? "すべて" : "表情の計測"})` : ""}
                 </td>

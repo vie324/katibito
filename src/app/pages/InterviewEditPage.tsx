@@ -1,7 +1,8 @@
 // 面接の登録・編集。?from=<面接ID> で「同じ候補者の次の面接」を登録する(候補者の情報を引き継ぐ)。
 
 import { useEffect, useState, type FormEvent } from "react";
-import type { QuestionPlan, Settings } from "../../shared/types";
+import { MEET_NEW_URL, normalizeMeetUrl } from "../../shared/meet";
+import type { InterviewFormat, QuestionPlan, Settings } from "../../shared/types";
 import { api, errorMessage, type InterviewInput } from "../api";
 import { QuestionPlanEditor } from "../components/TemplateEditors";
 import { fromLocalInput, toLocalInput } from "../format";
@@ -18,6 +19,8 @@ type Form = {
   round: string;
   scheduledAt: string;
   location: string;
+  format: InterviewFormat;
+  meetUrl: string;
   interviewerIds: string[];
   templateId: string;
   questions: QuestionPlan[];
@@ -69,6 +72,8 @@ export function InterviewEditPage({ id }: { id?: string }) {
             round: iv.round,
             scheduledAt: toLocalInput(iv.scheduledAt),
             location: iv.location,
+            format: iv.format,
+            meetUrl: iv.meetUrl ?? "",
             interviewerIds: iv.interviewerIds,
             templateId: iv.templateId ?? settings.defaultTemplateId,
             questions: iv.questions.map((text, i) => ({ text, minutes: iv.questionMinutes[i] ?? null })),
@@ -86,6 +91,8 @@ export function InterviewEditPage({ id }: { id?: string }) {
       round: "",
       scheduledAt: "",
       location: "",
+      format: "inPerson",
+      meetUrl: "",
       interviewerIds: user && user.role === "interviewer" ? [user.id] : [],
       templateId: settings.defaultTemplateId,
       questions: templateQuestions(settings, settings.defaultTemplateId),
@@ -110,6 +117,8 @@ export function InterviewEditPage({ id }: { id?: string }) {
           note: iv.candidate.note,
           round: nextRound(iv.round),
           location: iv.location,
+          // 形式は引き継ぐ。Meet のリンクは面接ごとに作ることが多いので引き継がない
+          format: iv.format,
           interviewerIds: iv.interviewerIds,
           templateId,
           questions: templateQuestions(settings, templateId),
@@ -130,8 +139,11 @@ export function InterviewEditPage({ id }: { id?: string }) {
     setForm({ ...form, templateId, questions: id ? form.questions : templateQuestions(settings, templateId) });
   };
 
+  const meetInvalid = form.meetUrl.trim() !== "" && !normalizeMeetUrl(form.meetUrl);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (meetInvalid) return;
     const age = form.age.trim() === "" ? null : Number(form.age);
     const body: InterviewInput = {
       candidate: {
@@ -144,6 +156,8 @@ export function InterviewEditPage({ id }: { id?: string }) {
       round: form.round,
       scheduledAt: fromLocalInput(form.scheduledAt),
       location: form.location,
+      format: form.format,
+      meetUrl: form.meetUrl.trim() ? normalizeMeetUrl(form.meetUrl) : null,
       interviewerIds: form.interviewerIds,
       questions: form.questions.map((q) => ({ text: q.text.trim(), minutes: q.minutes })).filter((q) => q.text),
       ...(templateLocked ? {} : { templateId: form.templateId }),
@@ -207,7 +221,43 @@ export function InterviewEditPage({ id }: { id?: string }) {
             <option key={r} value={r} />
           ))}
         </datalist>
-        <Field label="場所">
+        <Field label="形式">
+          <div className="checks">
+            <label className="check">
+              <input type="radio" name="format" checked={form.format === "inPerson"} onChange={() => set("format", "inPerson")} />
+              <span>対面</span>
+            </label>
+            <label className="check">
+              <input type="radio" name="format" checked={form.format === "online"} onChange={() => set("format", "online")} />
+              <span>オンライン(Google Meet)</span>
+            </label>
+          </div>
+        </Field>
+        <Field
+          label="Google Meet のリンク"
+          error={meetInvalid ? "Google Meet のリンク(https://meet.google.com/… の形)を入れてください" : null}
+          hint={
+            <>
+              {form.format === "online"
+                ? "候補者と面接官が参加する会議のリンクです。Google カレンダーの予定に付いたリンクを貼り付けるか、"
+                : "その場にいない人が Meet で同席する場合に入れます(空欄でも構いません)。"}
+              <a href={MEET_NEW_URL} target="_blank" rel="noopener noreferrer">
+                新しい Meet を作る
+              </a>
+              {form.format === "online" ? "(開いた会議のアドレスをコピーして貼り付けます)" : ""}
+            </>
+          }
+        >
+          <input
+            value={form.meetUrl}
+            onChange={(e) => set("meetUrl", e.target.value)}
+            placeholder="https://meet.google.com/abc-defg-hij"
+            inputMode="url"
+            autoComplete="off"
+            maxLength={300}
+          />
+        </Field>
+        <Field label="場所" hint={form.format === "online" ? "空欄なら「オンライン(Google Meet)」と表示します" : undefined}>
           <input value={form.location} onChange={(e) => set("location", e.target.value)} maxLength={100} />
         </Field>
         <Field label="面接官" hint="ここで選んだ人全員の評価がそろうと「判定待ち」になります">

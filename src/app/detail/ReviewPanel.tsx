@@ -218,7 +218,13 @@ export function ReviewPanel({
       {rec && (
         <div className="pad">
           <div className="rec-meta muted small">
-            {formatDateTime(rec.startedAt)} ・ {rec.source === "file" ? `取り込み${rec.originalName ? `(${rec.originalName})` : ""}` : "この画面で録画"} ・{" "}
+            {formatDateTime(rec.startedAt)} ・{" "}
+            {rec.source === "file"
+              ? `取り込み${rec.originalName ? `(${rec.originalName})` : ""}`
+              : rec.capture === "screen"
+                ? "Google Meet の画面から録画"
+                : "この画面で録画"}{" "}
+            ・{" "}
             {formatDuration(rec.durationMs)} ・ {formatBytes(rec.sizeBytes)} ・ {rec.createdByName}
             {rec.status !== "ready" && <span className={`rec-status st-${rec.status}`}> ・ {REC_STATUS[rec.status]}</span>}
             {rec.status === "ready" && !rec.indexed && <span> ・ シーク用の索引なし(移動に時間がかかることがあります)</span>}
@@ -378,6 +384,11 @@ export function ReviewPanel({
           )}
 
           {analysisError && <Notice kind="error">表情の計測結果を読み込めません: {analysisError}</Notice>}
+          {summary && rec.capture === "screen" && (
+            <Notice kind="info">
+              オンライン面接(Google Meet)の映像から計測しています。通信の状態で画質やコマ数が落ちると表情の動きが小さく出ることがあるため、対面の面接の値とは分けて参考にしてください。
+            </Notice>
+          )}
           {summary && <ExpressionSummaryView summary={summary} compare={compare} />}
 
           {!iv.consent?.analysis && (

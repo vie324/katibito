@@ -27,12 +27,12 @@ afterAll(async () => {
 
 let seq = 0;
 
-/** 面接を作り、録画と表情の計測データを送る */
-async function measured(age: number | null, extra: Record<string, unknown> = {}): Promise<string> {
+/** 面接を作り、録画と表情の計測データを送る(capture = screen は Google Meet の画面から録った録画) */
+async function measured(age: number | null, extra: Record<string, unknown> = {}, capture: "camera" | "screen" = "camera"): Promise<string> {
   seq++;
   const iid = await newInterview(admin, { candidate: { displayName: `計測${seq}`, age }, interviewerIds: [ids.alice, ids.bob], ...extra });
   const clientId = `dev-insight-${seq}`;
-  const rid = await readyRecording(server, admin, iid, clientId);
+  const rid = await readyRecording(server, admin, iid, clientId, capture);
   const t = await admin.req("PUT", `/api/interviews/${iid}/recordings/${rid}/track`, undefined, {
     raw: trackGz(60, seq),
     contentType: "application/gzip",
@@ -115,6 +115,28 @@ describe("表情の指標の分布(これまでの面接・同じ年代)", () =>
     expect(rows.find((r) => r.id === target)!.expression!.expressiveness).toBeGreaterThan(0);
     const plain = await newInterview(admin, { candidate: { displayName: "計測なし" } }, { analysis: false });
     expect((await rowsOf(alice)).find((r) => r.id === plain)!.expression).toBeNull();
+  });
+
+  it("オンライン面接(Google Meet の画面)の計測は、対面の面接とは分けて比べる", async () => {
+    const before = await compareOf(alice, target);
+    expect(before.capture).toBe("camera");
+    const online = await measured(11, { format: "online" }, "screen");
+    // 対面の面接の比べる相手に、Meet の画面から録った面接は入らない
+    const after = await compareOf(alice, target);
+    expect(after.all.n).toBe(before.all.n);
+    expect(after.band!.n).toBe(before.band!.n);
+    // Meet の面接は Meet の面接どうしで比べる(ほかにまだないので 0 件)
+    const o = await compareOf(alice, online);
+    expect(o.capture).toBe("screen");
+    expect(o.all.n).toBe(0);
+    // 録画がまだないオンライン面接は、面接の形式から Meet どうしで比べる
+    const planned = await newInterview(admin, { candidate: { displayName: "これからの Meet", age: 11 }, format: "online" });
+    expect((await compareOf(alice, planned)).capture).toBe("screen");
+    expect((await compareOf(alice, planned)).all.n).toBe(1);
+    // 比較一覧では、Meet の画面からの計測と分かる
+    const rows = await rowsOf(alice);
+    expect(rows.find((r) => r.id === online)!.expressionCapture).toBe("screen");
+    expect(rows.find((r) => r.id === target)!.expressionCapture).toBe("camera");
   });
 });
 

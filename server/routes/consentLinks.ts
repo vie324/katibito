@@ -3,6 +3,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { consentSnapshot, renderConsentText } from "../../src/shared/consent";
+import { placeLabel } from "../../src/shared/meet";
 import type { ConsentLink, ConsentRecord, Interview, PublicConsentInfo } from "../../src/shared/types";
 import { bool, id, int, obj, str, ValidationError } from "../../src/shared/validate";
 import type { AppContext } from "../context";
@@ -132,7 +133,7 @@ export function registerConsentLinkRoutes(r: Router, app: AppContext): void {
       details: {
         candidateName: iv.candidate.displayName,
         scheduledAt: iv.scheduledAt,
-        location: iv.location,
+        location: placeLabel(iv),
         minor: isMinor(iv.candidate),
         expiresAt: link.expiresAt,
         consent: { ...rendered, version },

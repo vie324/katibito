@@ -363,7 +363,14 @@ function CandidatesTab() {
                       </td>
                     );
                   })}
-                  <td className="num small center">{r.expression ? formatMetric(metric, r.expression[metric]) : <span className="muted">—</span>}</td>
+                  <td className="num small center">
+                    {r.expression ? formatMetric(metric, r.expression[metric]) : <span className="muted">—</span>}
+                    {r.expression && r.expressionCapture === "screen" && (
+                      <span className="online-tag" title="オンライン面接(Google Meet の画面)から計測。対面の値とは画質が違います">
+                        Meet
+                      </span>
+                    )}
+                  </td>
                   <td className="nowrap">{r.decision ? <VoteChip vote={r.decision} /> : <StatusChip status={r.status} />}</td>
                 </tr>
               ))}

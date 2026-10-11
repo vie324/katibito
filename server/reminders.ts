@@ -7,6 +7,7 @@ import { submittedEvaluations } from "../src/shared/status";
 import type { Interview } from "../src/shared/types";
 import type { AppContext } from "./context";
 import { mailEnabled, sendMail } from "./mail";
+import { placeLabel } from "../src/shared/meet";
 import { jstShort, mailLink, mailRecipients, whoLabel } from "./notifications";
 import { writeJsonAtomic, type UserRecord } from "./store";
 
@@ -68,9 +69,13 @@ function itemLines(ctx: AppContext, iv: Interview, withTime: "date" | "time"): s
       ? new Date(iv.scheduledAt).toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" })
       : jstShort(iv.scheduledAt)
     : "";
-  const head = `・${when ? `${when} ` : ""}${whoLabel(iv)}${iv.location ? ` ${iv.location}` : ""}`;
+  const place = placeLabel(iv);
+  const head = `・${when ? `${when} ` : ""}${whoLabel(iv)}${place ? ` ${place}` : ""}`;
+  const lines = [head];
+  if (iv.meetUrl) lines.push(`  Google Meet: ${iv.meetUrl}`);
   const link = mailLink(ctx, iv);
-  return link ? `${head}\n  ${link}` : head;
+  if (link) lines.push(`  ${link}`);
+  return lines.join("\n");
 }
 
 export type ReminderResult = { evaluation: number; dayBefore: number };
@@ -140,7 +145,11 @@ export async function runReminders(ctx: AppContext, now = Date.now()): Promise<R
           ctx,
           u.email,
           `明日(${m}/${d})の面接のお知らせ(${items.length}件)`,
-          `${u.name} さん\n\n明日、次の面接を担当します。\n\n${items.map((x) => itemLines(ctx, x.iv, "time")).join("\n")}\n\n当日は、録画の前に同意の確認をお願いします。`,
+          `${u.name} さん\n\n明日、次の面接を担当します。\n\n${items.map((x) => itemLines(ctx, x.iv, "time")).join("\n")}\n\n当日は、録画の前に同意の確認をお願いします。${
+            items.some((x) => x.iv.format === "online")
+              ? "\nオンライン面接は、Meet に参加してから、面接の画面の「録画を開始」で Meet のタブを選んで録画します。"
+              : ""
+          }`,
         );
         if (!ok) continue;
         result.dayBefore++;

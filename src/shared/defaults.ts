@@ -5,7 +5,7 @@ import type { Criterion, InterviewTemplate, NotifyPrefs, QuestionPlan, Role, Set
 
 export const DEFAULT_CONSENT_TITLE = "面接の録画と表情の計測についてのお願い";
 
-export const DEFAULT_CONSENT_BODY = `{団体名}では、面接の内容を、その場にいない担当者も含めて公平に確認するため、面接の様子をビデオで録画させていただきたいと考えています。
+export const DEFAULT_CONSENT_BODY = `{団体名}では、面接の内容を、その場にいない担当者も含めて公平に確認するため、面接の様子をビデオで録画させていただきたいと考えています(オンライン面接の場合は、Google Meet の画面と音声を録画します)。
 
 1. 録画の目的
 ・面接に同席できない担当者が、面接の様子を確認するため(録画中に数秒遅れで見ることもあります)

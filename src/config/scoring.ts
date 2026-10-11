@@ -206,8 +206,11 @@ export const INTERVIEW_ANALYSIS = {
   LIVE_INTERVAL_MS: 66,
   /** 動画ファイル解析の間隔(ms)。10fps 相当 */
   FILE_INTERVAL_MS: 100,
-  /** 同時に検出する顔の数(候補者 + 映り込んだ面接官) */
-  MAX_FACES: 3,
+  /**
+   * 同時に検出する顔の数(候補者 + 映り込んだ面接官)。オンライン面接(Google Meet)では
+   * 面接官3人と候補者の4人が並ぶため、候補者が数から漏れないよう余裕を持たせる
+   */
+  MAX_FACES: 5,
 
   /** 笑顔の回数: SIGNAL.SMILE_ON を超えた状態がこの時間続いたら1回と数える */
   SMILE_EPISODE_MIN_MS: 400,

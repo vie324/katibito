@@ -135,8 +135,14 @@ export async function newInterview(c: Client, body: Record<string, unknown> = {}
 }
 
 /** 録画を送り終えて、再生できるまで待つ */
-export async function readyRecording(server: TestServer, c: Client, iid: string, clientId: string): Promise<string> {
-  const r = await c.req("POST", `/api/interviews/${iid}/recordings`, { clientId, source: "live", mimeType: "video/webm;codecs=vp8,opus" });
+export async function readyRecording(
+  server: TestServer,
+  c: Client,
+  iid: string,
+  clientId: string,
+  capture: "camera" | "screen" = "camera",
+): Promise<string> {
+  const r = await c.req("POST", `/api/interviews/${iid}/recordings`, { clientId, source: "live", capture, mimeType: "video/webm;codecs=vp8,opus" });
   const rid = r.json.recording.id as string;
   const put = await c.req("PUT", `/api/interviews/${iid}/recordings/${rid}/chunks/0`, undefined, { raw: WEBM(), headers: fromDevice(clientId) });
   if (put.status !== 200) throw new Error(`chunk failed: ${JSON.stringify(put.json)}`);

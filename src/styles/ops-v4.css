@@ -1,0 +1,124 @@
+/* v0.4: オンライン面接(Google Meet)。 */
+
+/* 録画する映像の切り替え(カメラ / Google Meet) */
+.source-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+.source-switch .seg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 14px;
+  color: var(--ink-dim);
+}
+.source-switch .seg.on {
+  border-color: var(--signal-e);
+  color: var(--ink);
+  background: rgba(79, 179, 165, 0.08);
+}
+.seg-sub {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.meet-badge {
+  border-color: var(--signal-e);
+  color: var(--signal-e);
+}
+
+.meet-steps ol {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.4em;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.meet-steps li + li {
+  margin-top: var(--space-2);
+}
+.meet-steps a.button {
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
+.meet-steps .notice {
+  margin-top: var(--space-3);
+}
+
+ul.tips {
+  margin: 0;
+  padding-left: 1.2em;
+}
+ul.tips li + li {
+  margin-top: var(--space-1);
+}
+
+/* 面接の詳細・一覧の Meet のリンク */
+.meet-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.meet-link .meet-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.online-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 0 6px;
+  border: 1px solid var(--signal-e);
+  color: var(--signal-e);
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+/* オンライン面接の同意(同意のリンクを Meet のチャットに貼る) */
+.consent-online .copy-box {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  font-size: 13px;
+}
+.consent-online .waiting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+.consent-online .waiting::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--signal-e);
+  animation: meet-pulse 1.4s ease-in-out infinite;
+}
+@keyframes meet-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .consent-online .waiting::before {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .source-switch {
+    grid-template-columns: 1fr;
+  }
+}
+
+.todo-row .online-tag,
+.cal-name .online-tag,
+td .online-tag {
+  margin-left: var(--space-2);
+}

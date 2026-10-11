@@ -158,8 +158,11 @@ export type ConsentRecord = {
   candidateName: string;
   guardianName: string | null;
   guardianRelation: string | null;
-  /** onscreen = 面接の場で画面に表示 / paper = 紙の同意書 / online = 事前に送ったリンクから本人・保護者が入力 */
-  method: "onscreen" | "paper" | "online";
+  /**
+   * onscreen = 面接の場で画面に表示 / paper = 紙の同意書 / online = 事前に送ったリンクから本人・保護者が入力 /
+   * verbal = オンライン面接(Google Meet)で同意文を画面共有して読み、口頭で確認
+   */
+  method: "onscreen" | "paper" | "online" | "verbal";
   /** 提示した同意文の SHA-256(先頭12桁) */
   consentVersion: string;
   /** 提示した同意文そのもの(差し込み済み) */
@@ -251,6 +254,8 @@ export type RecordingMeta = {
    */
   clientId: string;
   source: "live" | "file";
+  /** 録画中の映像の元。camera = この端末のカメラ / screen = 画面の共有(Google Meet のタブなど)。取り込みは camera */
+  capture: "camera" | "screen";
   status: RecordingStatus;
   mimeType: string;
   /** サーバー上の保存名(video.webm 等) */
@@ -339,6 +344,10 @@ export type Interview = {
   round: string;
   scheduledAt: string | null;
   location: string;
+  /** 面接の形式。online = オンライン(Google Meet)。録画の画面の初期値や、予定・通知の表示に使う */
+  format: InterviewFormat;
+  /** Google Meet のリンク(https://meet.google.com/…)。オンライン面接や、離れた場所から同席する人のため */
+  meetUrl: string | null;
   interviewerIds: string[];
   questions: string[];
   /** questions と同じ順の、質問ごとの時間の目安(分) */
@@ -362,6 +371,8 @@ export type Interview = {
   consentLinks: ConsentLink[];
 };
 
+export type InterviewFormat = "inPerson" | "online";
+
 export type InterviewStatus =
   | "scheduled"   // 録画前
   | "uploading"   // 録画の送信・処理中
@@ -376,6 +387,8 @@ export type InterviewListItem = {
   round: string;
   scheduledAt: string | null;
   location: string;
+  format: InterviewFormat;
+  meetUrl: string | null;
   interviewerIds: string[];
   createdAt: string;
   status: InterviewStatus;
@@ -487,6 +500,8 @@ export type MetricDistribution = { n: number; values: Record<string, number[]> }
 
 export type ExpressionCompare = {
   minN: number;
+  /** 比べる相手の映像の元(対面のカメラ / オンライン面接の Google Meet の画面)。この面接と同じものだけで比べる */
+  capture: "camera" | "screen";
   /** この候補者(ほかの回の面接を含む)を除いた、これまでのすべての面接 */
   all: MetricDistribution;
   /** 同じ年代の面接(年齢が未入力なら null) */
@@ -518,6 +533,8 @@ export type CompareRow = {
   criteria: { label: string; weight: number; avg: number | null }[] | null;
   /** 表情の計測(代表の録画の全体値)。計測なし・信頼度が低いときは null */
   expression: Record<string, number | null> | null;
+  /** 表情の値をとった録画の映像の元(オンライン面接の Google Meet の画面は screen) */
+  expressionCapture: "camera" | "screen" | null;
 };
 
 /** 面接官ごとの評価の傾向 */

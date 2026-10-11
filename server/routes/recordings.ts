@@ -89,6 +89,9 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
     const clientId = str(body.clientId, "端末側の録画ID", { max: 64, min: 6 });
     if (!/^[A-Za-z0-9_-]+$/.test(clientId)) throw new ValidationError("端末側の録画IDが正しくありません");
     const source = oneOf(body.source, "録画の種類", ["live", "file"] as const);
+    // 録画中の映像の元(Google Meet のタブなどを共有して録ったもの = screen)。取り込みはカメラ扱い
+    const capture =
+      source === "live" && body.capture !== undefined ? oneOf(body.capture, "映像の元", ["camera", "screen"] as const) : "camera";
     const mimeType = str(body.mimeType, "形式", { max: 120, min: 3 });
     if (!/^(video|audio)\/[a-z0-9.+-]+(;.*)?$/i.test(mimeType)) throw new ValidationError("動画の形式ではありません");
     const startedAt = isoDate(body.startedAt, "録画開始時刻") ?? new Date().toISOString();
@@ -114,6 +117,7 @@ export function registerRecordingRoutes(r: Router, app: AppContext): void {
         id: newId(),
         clientId,
         source,
+        capture,
         status: "uploading",
         mimeType,
         fileName: null,

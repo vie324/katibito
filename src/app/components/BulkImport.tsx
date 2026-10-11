@@ -2,7 +2,8 @@
 // 1行でも誤りがあれば登録しない(直してから読み込み直す)。
 
 import { useMemo, useState } from "react";
-import type { InterviewTemplate, UserPublic } from "../../shared/types";
+import { normalizeMeetUrl } from "../../shared/meet";
+import type { InterviewFormat, InterviewTemplate, UserPublic } from "../../shared/types";
 import { api, errorMessage, type InterviewInput } from "../api";
 import { csvCell, decodeText, parseJstDateTime, parseTable } from "../csv";
 import { saveFile } from "../download";
@@ -10,7 +11,18 @@ import { formatDateTime } from "../format";
 import { useSession } from "../session";
 import { Modal, Notice } from "../ui";
 
-type ColumnKey = "displayName" | "kana" | "age" | "round" | "scheduledAt" | "location" | "interviewers" | "template" | "note";
+type ColumnKey =
+  | "displayName"
+  | "kana"
+  | "age"
+  | "round"
+  | "scheduledAt"
+  | "location"
+  | "format"
+  | "meetUrl"
+  | "interviewers"
+  | "template"
+  | "note";
 
 const COLUMNS: { key: ColumnKey; label: string; aliases: string[] }[] = [
   { key: "displayName", label: "表示名", aliases: ["表示名", "氏名", "名前", "候補者"] },
@@ -19,6 +31,8 @@ const COLUMNS: { key: ColumnKey; label: string; aliases: string[] }[] = [
   { key: "round", label: "面接の段階", aliases: ["面接の段階", "段階"] },
   { key: "scheduledAt", label: "面接日時", aliases: ["面接日時", "日時"] },
   { key: "location", label: "場所", aliases: ["場所"] },
+  { key: "format", label: "形式", aliases: ["形式", "面接の形式"] },
+  { key: "meetUrl", label: "Meet のリンク", aliases: ["Meet のリンク", "Meetのリンク", "Meet", "Google Meet", "会議のリンク"] },
   { key: "interviewers", label: "面接官", aliases: ["面接官"] },
   { key: "template", label: "評価シート", aliases: ["評価シート"] },
   { key: "note", label: "メモ", aliases: ["メモ", "備考"] },
@@ -71,6 +85,17 @@ function parseRows(table: string[][], users: UserPublic[], templates: InterviewT
       if (!t) errors.push(`評価シート「${cells.template}」が見つかりません`);
       else templateId = t.id;
     }
+    let meetUrl: string | null = null;
+    if (cells.meetUrl) {
+      meetUrl = normalizeMeetUrl(cells.meetUrl);
+      if (!meetUrl) errors.push("Meet のリンクは https://meet.google.com/… の形で入れてください");
+    }
+    let format: InterviewFormat = meetUrl ? "online" : "inPerson";
+    if (cells.format) {
+      if (/^(対面|来校|来社|会場)$/.test(cells.format)) format = "inPerson";
+      else if (/^(オンライン|online|(google\s*)?meet)$/i.test(cells.format)) format = "online";
+      else errors.push("形式は「対面」か「オンライン」にしてください");
+    }
     if ((cells.round ?? "").length > 20) errors.push("面接の段階は20文字までです");
     if ((cells.location ?? "").length > 100) errors.push("場所は100文字までです");
     if ((cells.kana ?? "").length > 60) errors.push("ふりがなは60文字までです");
@@ -84,6 +109,8 @@ function parseRows(table: string[][], users: UserPublic[], templates: InterviewT
         round: cells.round ?? "",
         scheduledAt,
         location: cells.location ?? "",
+        format,
+        meetUrl,
         interviewerIds,
         templateId,
       },
@@ -112,8 +139,10 @@ export function BulkImport({ onClose, onDone }: { onClose: () => void; onDone: (
 
   const template = () => {
     const header = COLUMNS.map((c) => c.label);
-    const example = ["山田 太郎", "やまだ たろう", "12", "一次面接", "2026/10/20 10:00", "本校 2F", users.filter((u) => !u.disabled).slice(0, 2).map((u) => u.loginId).join("/"), templates[0]?.name ?? "", ""];
-    const csv = "﻿" + [header, example].map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+    const interviewers = users.filter((u) => !u.disabled).slice(0, 2).map((u) => u.loginId).join("/");
+    const example = ["山田 太郎", "やまだ たろう", "12", "一次面接", "2026/10/20 10:00", "本校 2F", "対面", "", interviewers, templates[0]?.name ?? "", ""];
+    const online = ["佐藤 花", "さとう はな", "11", "一次面接", "2026/10/21 16:00", "", "オンライン", "https://meet.google.com/abc-defg-hij", interviewers, templates[0]?.name ?? "", ""];
+    const csv = "﻿" + [header, example, online].map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
     saveFile(csv, "面接の一括登録_ひな形.csv", "text/csv;charset=utf-8");
   };
 
@@ -170,6 +199,7 @@ export function BulkImport({ onClose, onDone }: { onClose: () => void; onDone: (
                     <th>年齢</th>
                     <th>段階</th>
                     <th>面接日時</th>
+                    <th>形式</th>
                     <th>面接官</th>
                     <th>評価シート</th>
                     <th />
@@ -186,6 +216,7 @@ export function BulkImport({ onClose, onDone }: { onClose: () => void; onDone: (
                       <td className="num">{r.body.candidate.age ?? ""}</td>
                       <td>{r.body.round}</td>
                       <td className="num nowrap">{r.body.scheduledAt ? formatDateTime(r.body.scheduledAt) : ""}</td>
+                      <td className="small nowrap">{r.body.format === "online" ? (r.body.meetUrl ? "オンライン(Meet)" : "オンライン") : "対面"}</td>
                       <td className="small">{r.interviewerNames.join("・")}</td>
                       <td className="small">{r.cells.template || <span className="muted">既定</span>}</td>
                       <td className="small warn-text">{r.errors.join(" / ")}</td>

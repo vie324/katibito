@@ -69,7 +69,7 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
     const labels: string[] = [];
     for (const iv of ivs) for (const cr of iv.criteria) if (!labels.includes(cr.label)) labels.push(cr.label);
     const header = [
-      "面接ID", "候補者", "ふりがな", "年齢", "未成年", "面接日時", "場所", "面接官", "状態",
+      "面接ID", "候補者", "ふりがな", "年齢", "未成年", "面接日時", "場所", "形式", "面接官", "状態",
       "録画同意", "計測同意", "合格票", "保留票", "不合格票", "提出数",
       "評価シート", "合計点(重み付き平均)",
       ...labels.map((l) => `${l}(平均)`),
@@ -99,6 +99,7 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
           iv.candidate.minor ? "はい" : "",
           jst(iv.scheduledAt),
           iv.location,
+          iv.format === "online" ? "オンライン" : "対面",
           iv.interviewerIds.map((u) => store.userName(u)).join(" / "),
           STATUS_LABEL[deriveStatus(iv, evals)],
           iv.consent ? (iv.consent.recording ? "あり" : "なし") : "未記録",

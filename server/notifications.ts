@@ -1,6 +1,7 @@
 // 業務イベントの通知(Webhook とメール)。候補者の表示名・日時・リンクだけを載せる(評価の内容や数値は載せない)。
 // メールは、その面接を見られる人のうち、お知らせを受け取る設定にしている人にだけ送る。
 
+import { placeLabel } from "../src/shared/meet";
 import { submittedEvaluations, VOTE_LABEL } from "../src/shared/status";
 import type { Decision, Interview, NotifyPrefs, RecordingMeta } from "../src/shared/types";
 import { canView } from "./access";
@@ -9,7 +10,10 @@ import { sendMailToUsers } from "./mail";
 import { sendWebhook } from "./notify";
 import type { UserRecord } from "./store";
 
-type IvLike = Pick<Interview, "id" | "candidate" | "round" | "scheduledAt" | "location" | "interviewerIds" | "createdBy">;
+type IvLike = Pick<
+  Interview,
+  "id" | "candidate" | "round" | "scheduledAt" | "location" | "format" | "meetUrl" | "interviewerIds" | "createdBy"
+>;
 
 export function interviewLink(ctx: AppContext, iv: Pick<Interview, "id">): string {
   const base = ctx.config.appUrl ?? ctx.lastOrigin;
@@ -47,11 +51,14 @@ export function whoLabel(iv: IvLike): string {
   return `${iv.candidate.displayName} さん${iv.round ? `(${iv.round})` : ""}`;
 }
 
-/** 面接の要点(日時・場所・リンク)をメールの本文用に */
+/** 面接の要点(日時・場所・Meet・リンク)をメールの本文用に */
 export function interviewLines(ctx: AppContext, iv: IvLike): string {
   const lines = [];
   if (iv.scheduledAt) lines.push(`面接日時: ${jstShort(iv.scheduledAt)}`);
-  if (iv.location) lines.push(`場所: ${iv.location}`);
+  const place = placeLabel(iv);
+  if (place) lines.push(`場所: ${place}`);
+  // Meet のリンクは meet.google.com のものだけを保存している(登録時に検証)
+  if (iv.meetUrl) lines.push(`Google Meet: ${iv.meetUrl}`);
   const link = mailLink(ctx, iv);
   if (link) lines.push(link);
   return lines.join("\n");

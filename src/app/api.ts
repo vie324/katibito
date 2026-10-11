@@ -8,6 +8,7 @@ import type {
   ConsentLink,
   ExpressionCompare,
   InterviewDetail,
+  InterviewFormat,
   InterviewListItem,
   LiveInfo,
   Marker,
@@ -113,7 +114,7 @@ export type ConsentInput = {
   candidateName: string;
   guardianName: string;
   guardianRelation: string;
-  method: "onscreen" | "paper";
+  method: "onscreen" | "paper" | "verbal";
   consentText: string;
 };
 
@@ -122,6 +123,8 @@ export type InterviewInput = {
   round: string;
   scheduledAt: string | null;
   location: string;
+  format?: InterviewFormat;
+  meetUrl?: string | null;
   interviewerIds: string[];
   questions: QuestionPlan[];
   templateId?: string;
@@ -220,7 +223,14 @@ export const api = {
 
   createRecording: (
     id: string,
-    b: { clientId: string; source: "live" | "file"; mimeType: string; startedAt: string; fileName?: string | null },
+    b: {
+      clientId: string;
+      source: "live" | "file";
+      capture?: "camera" | "screen";
+      mimeType: string;
+      startedAt: string;
+      fileName?: string | null;
+    },
   ) => request<{ recording: RecordingMeta; received: number[] }>("POST", `${iv(id)}/recordings`, b),
   recording: (id: string, rid: string) =>
     request<{ recording: RecordingMeta; received: number[] }>("GET", recPath(id, rid)),

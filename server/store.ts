@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_TEMPLATE_ID, defaultNotifyPrefs, defaultSettings, defaultTemplate } from "../src/shared/defaults";
+import { normalizeMeetUrl } from "../src/shared/meet";
 import type { Criterion, Evaluation, Interview, InterviewTemplate, Note, NotifyPrefs, Settings, UserAccount, UserPublic } from "../src/shared/types";
 import { ID_RE } from "../src/shared/validate";
 
@@ -348,6 +349,8 @@ function normalizeInterview(iv: Interview, settings: Settings): Interview {
     applicantId: iv.applicantId ?? iv.id,
     round: iv.round ?? "",
     location: iv.location ?? "",
+    format: iv.format === "online" ? "online" : "inPerson",
+    meetUrl: typeof iv.meetUrl === "string" ? normalizeMeetUrl(iv.meetUrl) : null,
     interviewerIds: iv.interviewerIds ?? [],
     questions,
     questionMinutes: questions.map((_, i) => iv.questionMinutes?.[i] ?? null),
@@ -358,6 +361,7 @@ function normalizeInterview(iv: Interview, settings: Settings): Interview {
     recordingDeclined: iv.recordingDeclined ?? false,
     recordings: (iv.recordings ?? []).map((r) => ({
       ...r,
+      capture: r.capture === "screen" ? "screen" : "camera",
       markers: r.markers ?? [],
       originalName: r.originalName ?? null,
       mp4Ready: r.mp4Ready ?? false,
