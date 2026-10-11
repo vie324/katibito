@@ -143,7 +143,13 @@ export async function notifyLiveStarted(ctx: AppContext, iv: Interview, startedB
   );
 }
 
-export async function notifyConsentOnline(ctx: AppContext, iv: Interview, recording: boolean, linkCreatedBy: string): Promise<void> {
+export async function notifyConsentOnline(
+  ctx: AppContext,
+  iv: Interview,
+  recording: boolean,
+  linkCreatedBy: string,
+  atInterview = false,
+): Promise<void> {
   await sendWebhook(
     ctx.store.settings.webhookUrl,
     `【面接記録】${iv.candidate.displayName} さんの同意がオンラインで届きました(録画${recording ? "に同意" : "には同意なし"})。\n${interviewLink(ctx, iv)}`,
@@ -160,6 +166,8 @@ export async function notifyConsentOnline(ctx: AppContext, iv: Interview, record
     ctx,
     to,
     `${whoLabel(iv)}の同意がオンラインで届きました`,
-    `${whoLabel(iv)}について、送った同意のリンクから回答が届きました。\n録画: ${recording ? "同意する" : "同意しない"}\n\n当日の撮影の前に、口頭でも確認してください。\n\n${interviewLines(ctx, iv)}`,
+    `${whoLabel(iv)}について、${atInterview ? "オンライン面接の最中に送った" : "送った"}同意のリンクから回答が届きました。\n録画: ${recording ? "同意する" : "同意しない"}\n\n${
+      atInterview ? "" : "当日の撮影の前に、口頭でも確認してください。\n\n"
+    }${interviewLines(ctx, iv)}`,
   );
 }

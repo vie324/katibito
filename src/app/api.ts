@@ -208,8 +208,8 @@ export const api = {
   attachmentUrl: (id: string, aid: string, download = false) => `${iv(id)}/attachments/${enc(aid)}${download ? "?download=1" : ""}`,
   deleteAttachment: (id: string, aid: string) =>
     request<{ attachments: AttachmentMeta[] }>("DELETE", `${iv(id)}/attachments/${enc(aid)}`),
-  createConsentLink: (id: string, days: number) =>
-    request<{ token: string; link: ConsentLink; detail: InterviewDetail }>("POST", `${iv(id)}/consent-links`, { days }),
+  createConsentLink: (id: string, days: number, purpose: "advance" | "meeting" = "advance") =>
+    request<{ token: string; link: ConsentLink; detail: InterviewDetail }>("POST", `${iv(id)}/consent-links`, { days, purpose }),
   revokeConsentLink: (id: string, lid: string) => request<InterviewDetail>("DELETE", `${iv(id)}/consent-links/${enc(lid)}`),
   publicConsent: (token: string) => request<PublicConsentInfo>("GET", `/api/public/consent/${enc(token)}`),
   submitPublicConsent: (
@@ -274,7 +274,8 @@ export const api = {
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/reprocess`, {}),
 
   search: (q: string) => request<{ results: SearchResult[]; truncated: boolean }>("GET", `/api/search?q=${enc(q)}`),
-  expressionCompare: (id: string) => request<ExpressionCompare>("GET", `${iv(id)}/expression-compare`),
+  expressionCompare: (id: string, capture?: "camera" | "screen") =>
+    request<ExpressionCompare>("GET", `${iv(id)}/expression-compare${capture ? `?capture=${capture}` : ""}`),
   compare: () => request<{ rows: CompareRow[] }>("GET", "/api/compare"),
   raterStats: () => request<{ raters: RaterStats[] }>("GET", "/api/stats/raters"),
   /** 指定した面接だけの CSV(管理者) */

@@ -281,10 +281,6 @@ export async function loadSummary(
 }
 
 /** 面接の代表の集計(顔が最も長く映っていた録画)。比較・CSV で使う */
-export async function representativeSummary(ctx: AppContext, iid: string): Promise<ExpressionSummary | null> {
-  return (await representative(ctx, iid))?.summary ?? null;
-}
-
 /** 代表の録画の集計と、その録画の映像の元(カメラ / Google Meet の画面) */
 export async function representative(
   ctx: AppContext,

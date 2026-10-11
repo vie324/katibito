@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { consentSnapshot, renderConsentText } from "../../src/shared/consent";
 import { placeLabel } from "../../src/shared/meet";
 import type { ConsentLink, ConsentRecord, Interview, PublicConsentInfo } from "../../src/shared/types";
-import { bool, id, int, obj, str, ValidationError } from "../../src/shared/validate";
+import { bool, id, int, obj, oneOf, str, ValidationError } from "../../src/shared/validate";
 import type { AppContext } from "../context";
 import { HttpError, readJson, type Ctx, type Router } from "../http";
 import { notifyConsentOnline } from "../notifications";
@@ -78,6 +78,8 @@ export function registerConsentLinkRoutes(r: Router, app: AppContext): void {
   r.post("/api/interviews/:id/consent-links", "user", async (c) => {
     const body = obj(await readJson(c));
     const days = int(body.days, "有効期限", { min: 1, max: 60, optional: true }) ?? 14;
+    // meeting = オンライン面接の最中に Meet のチャットで送るリンク(回答は面接の場での同意として扱う)
+    const purpose = body.purpose === undefined ? "advance" : oneOf(body.purpose, "リンクの用途", ["advance", "meeting"] as const);
     const token = randomBytes(32).toString("base64url");
     const out = await store.withLock(c.params.id, async () => {
       const iv = getInterview(app, c.params.id);
@@ -94,12 +96,13 @@ export function registerConsentLinkRoutes(r: Router, app: AppContext): void {
         expiresAt: new Date(now + days * DAY).toISOString(),
         usedAt: null,
         revokedAt: null,
+        purpose,
       };
       iv.consentLinks.push(link);
       await store.saveInterview(iv);
       return { link, detail: buildDetail(app, iv, c.user!) };
     });
-    await audit(app, c, "consent_link_create", c.params.id, `days=${days}`);
+    await audit(app, c, "consent_link_create", c.params.id, `days=${days} purpose=${purpose}`);
     return { token, link: { ...out.link, tokenHash: "" }, detail: out.detail };
   });
 
@@ -180,6 +183,7 @@ export function registerConsentLinkRoutes(r: Router, app: AppContext): void {
         withdrawnAt: null,
         withdrawnScope: null,
         linkId: link.id,
+        atInterview: link.purpose === "meeting",
       };
       iv.consent = consent;
       iv.recordingDeclined = !recording;
@@ -195,7 +199,7 @@ export function registerConsentLinkRoutes(r: Router, app: AppContext): void {
       detail: `recording=${recording} analysis=${analysis} link=${result.link.id}`,
       ip: c.ip,
     });
-    void notifyConsentOnline(app, result.iv, recording, result.link.createdBy);
+    void notifyConsentOnline(app, result.iv, recording, result.link.createdBy, result.link.purpose === "meeting");
     return { ok: true, recording, analysis };
   });
 }

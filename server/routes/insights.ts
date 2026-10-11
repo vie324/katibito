@@ -203,8 +203,10 @@ export function registerInsightRoutes(r: Router, app: AppContext): void {
     const iv = getInterview(app, c.params.id);
     const band = ageBand(iv.candidate.age);
     const minN = INTERVIEW_ANALYSIS.COMPARE_MIN_N;
-    // 対面(カメラ)とオンライン(Google Meet の画面)は画質が違うため、同じ映像の元の面接どうしで比べる
-    const capture = captureOf(iv, await expressionOf(app, iv));
+    // 対面(カメラ)とオンライン(Google Meet の画面)は画質が違うため、同じ映像の元の面接どうしで比べる。
+    // 確認画面で選んでいる録画の映像の元を ?capture= で指定できる(1つの面接に両方の録画があるとき)
+    const q = c.query.get("capture");
+    const capture: Capture = q === "camera" || q === "screen" ? q : captureOf(iv, await expressionOf(app, iv));
     const all: ExpressionMetrics[] = [];
     const inBand: ExpressionMetrics[] = [];
     for (const x of store.interviews.values()) {

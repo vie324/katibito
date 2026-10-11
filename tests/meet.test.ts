@@ -163,7 +163,36 @@ describe("オンライン面接(サーバー)", () => {
     expect((r2.json as InterviewDetail).interview.consent!.method).toBe("verbal");
   });
 
-  it("画面の共有(Google Meet のタブ)で録った録画は capture = screen として残る。取り込みはカメラ扱い", async () => {
+  it("Meet のチャットで送ったリンク(面接の最中)への回答は、面接の場での同意として扱う", async () => {
+    const pub = new Client(() => server.base);
+    const future = new Date(Date.now() + 2 * 3600_000).toISOString();
+    const answer = async (purpose: "advance" | "meeting") => {
+      const iid = ((await create({ format: "online", scheduledAt: future })).json as InterviewDetail).interview.id;
+      const l = await alice.req("POST", `/api/interviews/${iid}/consent-links`, { days: 1, purpose });
+      expect(l.status).toBe(200);
+      const info = (await pub.req("GET", `/api/public/consent/${l.json.token}`)).json;
+      const r = await pub.req("POST", `/api/public/consent/${l.json.token}`, {
+        recording: false,
+        analysis: false,
+        candidateName: "Meet の人",
+        consentVersion: info.details.consent.version,
+      });
+      expect(r.status).toBe(200);
+      return (await alice.req("GET", `/api/interviews/${iid}`)).json as InterviewDetail;
+    };
+    // 面接の最中に断られた: 予定日時の前でも、録画なしで行った面接として評価に進む
+    const during = await answer("meeting");
+    expect(during.interview.consent!.atInterview).toBe(true);
+    expect(during.status).toBe("evaluating");
+    // 事前のリンクで断られた: 予定日時までは「録画前」
+    const before = await answer("advance");
+    expect(before.interview.consent!.atInterview).toBe(false);
+    expect(before.status).toBe("scheduled");
+    const fresh = ((await create({ format: "online" })).json as InterviewDetail).interview.id;
+    expect((await alice.req("POST", `/api/interviews/${fresh}/consent-links`, { purpose: "later" })).status).toBe(400);
+  });
+
+  it("Google Meet のタブで録った録画・オンライン面接に取り込んだ Meet の録画は capture = screen として残る。指定がなければカメラ", async () => {
     const iid = await newInterview(alice, { candidate: { displayName: "Meet で録画" }, format: "online", interviewerIds: [ids.alice] });
     const rid = await readyRecording(server, alice, iid, "dev-meet-tab-1", "screen");
     let d = (await alice.req("GET", `/api/interviews/${iid}`)).json as InterviewDetail;
@@ -171,7 +200,7 @@ describe("オンライン面接(サーバー)", () => {
 
     // 指定しなければカメラ
     const cam = await readyRecording(server, alice, iid, "dev-meet-cam-1");
-    // 取り込み(file)に screen を指定してもカメラ扱い
+    // 取り込み(file)も指定どおり(オンライン面接では、画面が screen を指定して Meet の録画として取り込む)
     const f = await alice.req("POST", `/api/interviews/${iid}/recordings`, {
       clientId: "dev-meet-file-1",
       source: "file",
@@ -180,10 +209,17 @@ describe("オンライン面接(サーバー)", () => {
       fileName: "meet.webm",
     });
     expect(f.status).toBe(200);
+    const f2 = await alice.req("POST", `/api/interviews/${iid}/recordings`, {
+      clientId: "dev-meet-file-2",
+      source: "file",
+      mimeType: "video/webm",
+      fileName: "camcorder.webm",
+    });
     expect((await alice.req("POST", `/api/interviews/${iid}/recordings`, { clientId: "dev-meet-bad-1", source: "live", capture: "tv", mimeType: "video/webm" })).status).toBe(400);
     d = (await alice.req("GET", `/api/interviews/${iid}`)).json as InterviewDetail;
     expect(d.interview.recordings.find((r) => r.id === cam)!.capture).toBe("camera");
-    expect(d.interview.recordings.find((r) => r.id === f.json.recording.id)!.capture).toBe("camera");
+    expect(d.interview.recordings.find((r) => r.id === f.json.recording.id)!.capture).toBe("screen");
+    expect(d.interview.recordings.find((r) => r.id === f2.json.recording.id)!.capture).toBe("camera");
     // 送信の合言葉なしでは送れない(画面の共有の録画も同じ)
     expect(
       (await alice.req("PUT", `/api/interviews/${iid}/recordings/${f.json.recording.id}/chunks/0`, undefined, { raw: WEBM(), headers: fromDevice("other-device") })).status,

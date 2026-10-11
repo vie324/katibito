@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { pickRepresentative, type ExpressionSummary } from "../../analysis/expression";
 import { CONSENT_METHOD_LABEL } from "../../shared/consent";
 import { meetLabel } from "../../shared/meet";
-import type { ExpressionCompare, InterviewDetail } from "../../shared/types";
+import type { InterviewDetail } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { AttachmentsPanel } from "../detail/AttachmentsPanel";
 import { ConsentLinksPanel } from "../detail/ConsentLinksPanel";
@@ -55,7 +55,6 @@ export function InterviewDetailPage({ id }: { id: string }) {
   const toast = useToast();
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [compare, setCompare] = useState<ExpressionCompare | null>(null);
   const [summary, setSummary] = useState<ExpressionSummary | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -69,11 +68,6 @@ export function InterviewDetailPage({ id }: { id: string }) {
       .interview(id)
       .then((d) => alive && setDetail(d))
       .catch((e) => alive && setError(errorMessage(e)));
-    setCompare(null);
-    api
-      .expressionCompare(id)
-      .then((s) => alive && setCompare(s))
-      .catch(() => undefined);
     return () => {
       alive = false;
     };
@@ -312,7 +306,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <div className="detail-main">
           {liveRec && <LivePanel detail={detail} setDetail={setDetail} rec={liveRec} />}
           {activeRecs.length > 0 ? (
-            <ReviewPanel detail={detail} setDetail={setDetail} compare={compare} />
+            <ReviewPanel detail={detail} setDetail={setDetail} />
           ) : (
             <section className="panel pad empty-review">
               {iv.recordingDeclined ? (

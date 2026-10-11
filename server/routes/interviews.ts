@@ -172,7 +172,9 @@ export function listItem(app: AppContext, iv: Interview, user: UserRecord): Inte
     interviewerIds: iv.interviewerIds,
     createdAt: iv.createdAt,
     status: deriveStatus(iv, evals),
-    consent: iv.consent ? { recording: iv.consent.recording, analysis: iv.consent.analysis, method: iv.consent.method } : null,
+    consent: iv.consent
+      ? { recording: iv.consent.recording, analysis: iv.consent.analysis, method: iv.consent.method, atInterview: iv.consent.atInterview ?? false }
+      : null,
     recordingDeclined: iv.recordingDeclined,
     recordingCount: iv.recordings.filter((r) => r.status !== "deleted").length,
     readyRecordingCount: ready.length,

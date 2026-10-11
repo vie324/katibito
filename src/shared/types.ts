@@ -174,6 +174,8 @@ export type ConsentRecord = {
   withdrawnScope: "analysis" | "all" | null;
   /** オンラインで取得したときの、同意のリンクの ID */
   linkId?: string | null;
+  /** オンライン面接の最中に送ったリンクから回答された(面接の前の回答ではない) */
+  atInterview?: boolean;
 };
 
 /** 応募書類など、面接に添付したファイル */
@@ -205,6 +207,8 @@ export type ConsentLink = {
   expiresAt: string;
   usedAt: string | null;
   revokedAt: string | null;
+  /** advance = 面接の前に送るリンク / meeting = オンライン面接の最中に Meet のチャットで送ったリンク。古い記録にはない(advance) */
+  purpose?: "advance" | "meeting";
 };
 
 /** 同意のリンクを開いた人に見せる内容(ログイン不要の画面) */
@@ -254,7 +258,10 @@ export type RecordingMeta = {
    */
   clientId: string;
   source: "live" | "file";
-  /** 録画中の映像の元。camera = この端末のカメラ / screen = 画面の共有(Google Meet のタブなど)。取り込みは camera */
+  /**
+   * 映像の元。camera = カメラ(対面の面接) / screen = オンライン面接の映像
+   * (Google Meet のタブの共有で録画したもの・オンライン面接に取り込んだ Meet の録画)。表情の比較を分けるのに使う
+   */
   capture: "camera" | "screen";
   status: RecordingStatus;
   mimeType: string;
@@ -392,7 +399,7 @@ export type InterviewListItem = {
   interviewerIds: string[];
   createdAt: string;
   status: InterviewStatus;
-  consent: { recording: boolean; analysis: boolean; method: ConsentRecord["method"] } | null;
+  consent: { recording: boolean; analysis: boolean; method: ConsentRecord["method"]; atInterview: boolean } | null;
   recordingDeclined: boolean;
   recordingCount: number;
   readyRecordingCount: number;

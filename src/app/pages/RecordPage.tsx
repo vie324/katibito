@@ -132,6 +132,8 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
   const screenRef = useRef<ScreenCapture | null>(null);
   const stepRef = useRef(step);
   stepRef.current = step;
+  /** 映像・音声を取り直すたびに進める番号。待っている間に切り替え・画面の移動があれば、遅れて届いたものは使わずに止める */
+  const mediaGenRef = useRef(0);
 
   const [choice, setChoice] = useState<DeviceChoice>(loadDeviceChoice);
   const [devices, setDevices] = useState<{ videos: MediaDeviceInfo[]; audios: MediaDeviceInfo[] }>({ videos: [], audios: [] });
@@ -174,8 +176,9 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
   );
 
   // ---------------------------------------------------------------- カメラ・画面の共有
-  /** いまの映像・音声を止める(カメラ・画面の共有とも) */
+  /** いまの映像・音声を止める(カメラ・画面の共有とも)。取得の途中のものも無効にする */
   const releaseMedia = useCallback(() => {
+    mediaGenRef.current++;
     analyzerRef.current?.stop();
     analyzerRef.current = null;
     audioRef.current?.close();
@@ -186,8 +189,12 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     screenRef.current = null;
   }, []);
 
-  /** 取得した映像をプレビューに映し、音量の計測を始める */
-  const attach = useCallback(async (stream: MediaStream) => {
+  /**
+   * 取得した映像をプレビューに映し、音量の計測を始める。gen が古くなっていたら(待っている間に切り替えた等)何もせず false。
+   * 呼び出し側は false のとき、取得したものを止めること
+   */
+  const attach = useCallback(async (stream: MediaStream, gen: number): Promise<boolean> => {
+    if (gen !== mediaGenRef.current) return false;
     streamRef.current = stream;
     const video = videoRef.current;
     if (video) {
@@ -199,23 +206,33 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
         setTimeout(resolve, 3000);
       });
     }
+    let audio: AudioEngine | null = null;
     try {
-      audioRef.current = await AudioEngine.create(stream);
+      audio = await AudioEngine.create(stream);
     } catch (e) {
       console.warn("[record] 音量の計測を開始できません", e);
     }
+    if (gen !== mediaGenRef.current) {
+      audio?.close();
+      return false;
+    }
+    audioRef.current = audio;
     setDevices(await listDevices());
+    if (gen !== mediaGenRef.current) return false;
     setMediaReady(true);
+    return true;
   }, []);
 
   const startCamera = useCallback(async (c: DeviceChoice) => {
     setMediaError(null);
     setMediaReady(false);
     releaseMedia();
+    const gen = mediaGenRef.current;
     try {
-      await attach(await openCamera(c, quality));
+      const stream = await openCamera(c, quality);
+      if (!(await attach(stream, gen))) stopStream(stream);
     } catch (e) {
-      setMediaError(cameraErrorMessage(e));
+      if (gen === mediaGenRef.current) setMediaError(cameraErrorMessage(e));
     }
   }, [quality, releaseMedia, attach]);
 
@@ -226,19 +243,26 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     setMediaReady(false);
     setScreen(null);
     releaseMedia();
+    const gen = mediaGenRef.current;
     setChoosing(true);
     try {
       const cap = await openScreenCapture(choice.audioId, quality);
+      // マイクの許可を待っている間に、カメラへの切り替え・画面の移動があった
+      if (gen !== mediaGenRef.current) {
+        cap.close();
+        return;
+      }
       screenRef.current = cap;
       cap.onEnded = () => shareEndedRef.current();
       setScreen({ surface: cap.surface, hasTabAudio: cap.hasTabAudio, hasMic: cap.hasMic, micError: cap.micError });
-      await attach(cap.stream);
+      if (!(await attach(cap.stream, gen))) cap.close();
     } catch (e) {
+      if (gen !== mediaGenRef.current) return;
       const msg = screenErrorMessage(e);
       if (msg) setMediaError(msg);
       else setScreenNote("Meet のタブが選ばれませんでした。もう一度「Meet のタブを選ぶ」を押してください。");
     } finally {
-      setChoosing(false);
+      if (gen === mediaGenRef.current) setChoosing(false);
     }
   };
 
@@ -247,6 +271,8 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     if (source === "camera") void startCamera(choice);
     void storageEstimate().then(setStorage);
     return () => {
+      // 取得の途中のもの(マイクの許可待ちの画面の共有など)は、届いても使わずに止める
+      mediaGenRef.current++;
       // 録画中に画面を離れた場合も、そこまでの録画は保存して送信する
       const track = analyzerRef.current?.stop() ?? null;
       const r = recorderRef.current;
@@ -268,6 +294,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     setScreenNote(null);
     setScreen(null);
     setMediaReady(false);
+    setChoosing(false);
     releaseMedia();
     if (s === "camera") void startCamera(choice);
   };
@@ -283,11 +310,19 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     // Meet の録画中の準備: 共有はそのままで、マイクだけ切り替える
     const cap = screenRef.current;
     if (cap && patch.audioId !== undefined) {
-      void cap.replaceMic(next.audioId).then(() => setScreen((s) => (s ? { ...s, hasMic: cap.hasMic, micError: cap.micError } : s)));
+      void cap.replaceMic(next.audioId).then(() => {
+        // 待っている間に Meet のタブを選び直していたら、新しい共有の表示を上書きしない
+        if (screenRef.current === cap) setScreen((s) => (s ? { ...s, hasMic: cap.hasMic, micError: cap.micError } : s));
+      });
     }
   };
 
   // ---------------------------------------------------------------- 顔の計測(同意がある場合のみ)
+  // モデルは画面を開いた時点で読み込み始める(Meet のタブを選んですぐ録画を始めても計測が間に合うように)
+  useEffect(() => {
+    if (analysisAllowed) void loadFaceEngine().catch(() => undefined);
+  }, [analysisAllowed]);
+
   useEffect(() => {
     if (!analysisAllowed || !mediaReady || step === "finished") return;
     let alive = true;
@@ -299,6 +334,9 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
           const a = new LiveAnalyzer(engine, videoRef.current, audioRef.current, streamRef.current?.getVideoTracks()[0] ?? null);
           analyzerRef.current = a;
           a.run();
+          // 計測のモデルの読み込みより先に録画を始めていたら、ここから記録する(それまでの時間は計測なしとして残す)
+          const r = recorderRef.current;
+          if (r && !r.isStopped && r.t0 !== null) a.beginRecording(r.t0, true);
         }
         setEngineState((s) => ({ ...s, ready: true, error: null }));
       })
@@ -426,6 +464,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     if (!stream) return;
     setStarting(true);
     setWarning(null);
+    setShareStopped(false);
     try {
       await requestPersistence();
       const recorder = new LocalRecorder(stream, {
@@ -445,9 +484,13 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
       setMarkers([]);
       setCurrentQ(null);
       setQStartMs(null);
-      setShareStopped(false);
       await acquireWakeLock();
       setStep("recording");
+      // 始めている間に画面の共有が止まっていた: そこまでの(短い)録画を残して終える
+      if (source === "screen" && stream.getVideoTracks()[0]?.readyState === "ended") {
+        setShareStopped(true);
+        await stopRecording();
+      }
     } catch (e) {
       setWarning(errorMessage(e));
     } finally {
@@ -482,10 +525,12 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
   // 画面の共有が止められた(Chrome の「共有を停止」・Meet のタブを閉じた など)
   const shareEndedRef = useRef<() => void>(() => undefined);
   shareEndedRef.current = () => {
-    if (stepRef.current === "recording") {
-      // そこまでの録画は保存して送る
+    // 録画を始めているか(画面の表示の切り替わりより先に、録画の状態で判断する)
+    const r = recorderRef.current;
+    if (r && !r.isStopped) {
       setShareStopped(true);
-      void stopRecording();
+      // 始めている途中なら、始め終わったところで止める(startRecording が共有の終わりを見て止める)
+      if (r.t0 !== null) void stopRecording();
       return;
     }
     releaseMedia();
@@ -707,7 +752,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
           </div>
           {!recording && iv.consent?.method === "online" && (
             <Notice kind="info">
-              同意は事前にオンラインで入力されています(
+              同意は{iv.consent.atInterview ? " Meet のチャットで送ったリンクから" : "事前にオンラインで"}入力されています(
               {iv.consent.guardianName ? `保護者 ${iv.consent.guardianName}` : iv.consent.candidateName}
               ・録画 {iv.consent.recording ? "同意" : "不同意"}・表情の計測 {iv.consent.analysis ? "同意" : "不同意"})。
               撮影を始める前に、本人{iv.consent.guardianName ? "・保護者" : ""}に口頭でも確認してください。
@@ -776,6 +821,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
                     role="radio"
                     aria-checked={source === "camera"}
                     className={source === "camera" ? "seg on" : "seg"}
+                    disabled={choosing}
                     onClick={() => changeSource("camera")}
                   >
                     カメラ<span className="seg-sub">対面の面接</span>
@@ -785,6 +831,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
                     role="radio"
                     aria-checked={source === "screen"}
                     className={source === "screen" ? "seg on" : "seg"}
+                    disabled={choosing}
                     onClick={() => changeSource("screen")}
                   >
                     Google Meet<span className="seg-sub">オンラインの面接</span>

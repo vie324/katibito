@@ -133,6 +133,10 @@ describe("表情の指標の分布(これまでの面接・同じ年代)", () =>
     const planned = await newInterview(admin, { candidate: { displayName: "これからの Meet", age: 11 }, format: "online" });
     expect((await compareOf(alice, planned)).capture).toBe("screen");
     expect((await compareOf(alice, planned)).all.n).toBe(1);
+    // 確認画面で選んでいる録画に合わせて、映像の元を指定できる(1つの面接に対面と Meet の録画があるとき)
+    const forced = (await alice.req("GET", `/api/interviews/${target}/expression-compare?capture=screen`)).json as ExpressionCompare;
+    expect(forced.capture).toBe("screen");
+    expect(forced.all.n).toBe(1);
     // 比較一覧では、Meet の画面からの計測と分かる
     const rows = await rowsOf(alice);
     expect(rows.find((r) => r.id === online)!.expressionCapture).toBe("screen");

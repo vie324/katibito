@@ -8,7 +8,7 @@ import { arr, id, int, obj } from "../../src/shared/validate";
 import type { AppContext } from "../context";
 import { attachmentHeader, HANDLED, HttpError, readJson, type Ctx, type Router } from "../http";
 import { ensureModels, transcriptionStatus } from "../transcribe";
-import { representativeSummary } from "../recordings";
+import { representative } from "../recordings";
 import { runRetention } from "../retention";
 import { storageUsage } from "../storage";
 import { audit } from "./interviews";
@@ -69,13 +69,15 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
     const labels: string[] = [];
     for (const iv of ivs) for (const cr of iv.criteria) if (!labels.includes(cr.label)) labels.push(cr.label);
     const header = [
-      "面接ID", "候補者", "ふりがな", "年齢", "未成年", "面接日時", "場所", "形式", "面接官", "状態",
+      "面接ID", "候補者", "ふりがな", "年齢", "未成年", "面接日時", "場所", "面接官", "状態",
       "録画同意", "計測同意", "合格票", "保留票", "不合格票", "提出数",
       "評価シート", "合計点(重み付き平均)",
       ...labels.map((l) => `${l}(平均)`),
       "判定", "判定日時", "判定者", "判定理由",
       ...COMPARABLE_METRICS.map((k) => `${METRIC_META[k].label}${METRIC_META[k].unit ? `(${METRIC_META[k].unit})` : ""}`),
       "顔の計測率(%)", "計測の信頼度",
+      // v0.4 で追加(既存の列の位置を変えないよう末尾に)
+      "形式", "表情の値の映像",
     ];
     const rows: string[] = [header.map(csvCell).join(",")];
     for (const iv of ivs) {
@@ -89,7 +91,8 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
         return typeof v === "number" ? v.toFixed(2) : "";
       };
       const score = averageScore(iv.criteria, evals);
-      const s = await representativeSummary(app, iv.id);
+      const rep = await representative(app, iv.id);
+      const s = rep?.summary ?? null;
       rows.push(
         [
           iv.id,
@@ -99,7 +102,6 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
           iv.candidate.minor ? "はい" : "",
           jst(iv.scheduledAt),
           iv.location,
-          iv.format === "online" ? "オンライン" : "対面",
           iv.interviewerIds.map((u) => store.userName(u)).join(" / "),
           STATUS_LABEL[deriveStatus(iv, evals)],
           iv.consent ? (iv.consent.recording ? "あり" : "なし") : "未記録",
@@ -118,6 +120,8 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
           ...COMPARABLE_METRICS.map((k) => (s ? formatMetric(k, s.overall[k]).replace("—", "") : "")),
           s ? formatMetric("faceDetectRate", s.overall.faceDetectRate) : "",
           s ? QUALITY_LABEL[s.quality.level] : "",
+          iv.format === "online" ? "オンライン" : "対面",
+          rep ? (rep.capture === "screen" ? "Google Meet" : "カメラ") : "",
         ]
           .map(csvCell)
           .join(","),

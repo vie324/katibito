@@ -214,8 +214,8 @@ function OnlineConsentLink({
     setBusy(true);
     setError(null);
     try {
-      // その場で使うリンクなので、有効期限は短く(1日)
-      const r = await api.createConsentLink(interview.id, 1);
+      // その場で使うリンクなので、有効期限は短く(1日)。回答は面接の場での同意として記録される
+      const r = await api.createConsentLink(interview.id, 1, "meeting");
       setUrl(`${window.location.origin}/c/${r.token}`);
     } catch (e) {
       setError(errorMessage(e));

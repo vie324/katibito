@@ -24,8 +24,9 @@ Meet の API(Meet REST API・Meet Media API・アドオン)は使わない。Goo
 |---|---|---|
 | 面接 `format: "inPerson" \| "online"` | interview.json | `"inPerson"`(`normalizeInterview`) |
 | 面接 `meetUrl: string \| null` | interview.json | `null`。文字列なら `normalizeMeetUrl` を通す |
-| 録画 `capture: "camera" \| "screen"` | interview.json | `"camera"`。取り込み(`source: "file"`)は常に `camera` |
-| 同意 `method` に `"verbal"` | interview.json | — |
+| 録画 `capture: "camera" \| "screen"` | interview.json | `"camera"`。オンライン面接への取り込み(Meet の録画)は画面が `screen` を指定する |
+| 同意 `method` に `"verbal"`、`atInterview` | interview.json | — |
+| 同意のリンク `purpose: "advance" \| "meeting"` | interview.json | なし = `advance` |
 | 一覧の項目 `format` `meetUrl`、`consent.method` | API の応答 | — |
 | 比較 `ExpressionCompare.capture`、`CompareRow.expressionCapture` | API の応答 | — |
 
@@ -76,6 +77,11 @@ Meet の画面には、ほかの面接官の映像も映る。候補者の追跡
   JavaScript は1本で動くので、タイマーが動くのは読み取りを待っている間(列が空のとき)だけになる
 - ライブの心拍(`POST …/live`)は5秒ごとのタイマーに加え、録画のチャンク(`dataavailable`、2秒ごと)でも送る(4秒に1回まで)。
   裏に回ったページのタイマーは間引かれる(5分を超えると1分に1回)が、録画の合図は時間どおりに届くため、ライブが途切れない
+- 計測のモデルは録画の画面を開いた時点で読み込み始める。それでもモデルより先に録画を始めた場合は、計測を始めた時点から
+  記録し(`beginRecording(t0, late)`)、録画の先頭からそこまでは `stalled` の区間として残す(以前は録画全体の計測が抜けていた)
+- 映像・音声の取得(カメラ・画面の共有)は番号(`mediaGenRef`)で管理し、マイクの許可を待っている間に映像の元を切り替えたり
+  画面を離れたりした場合は、遅れて届いたものを使わずに止める(共有中の表示やカメラのランプが残らないように)。
+  録画を始めている途中で共有が止まった場合は、始め終わったところで録画を終える
 
 ## 4. オンライン面接の同意
 
@@ -86,9 +92,12 @@ Meet の画面には、ほかの面接官の映像も映る。候補者の追跡
 | 対面 | この画面を見せる(`onscreen`)/ 紙(`paper`) |
 | オンライン | 同意のリンクを Meet のチャットで送る(既定)/ 口頭で確認(`verbal`)/ 紙 |
 
-- 「同意のリンクを Meet のチャットで送る」: 既存の同意のリンク(`POST /api/interviews/:id/consent-links`、有効期限 1日)を作り、
+- 「同意のリンクを Meet のチャットで送る」: 同意のリンク(`POST /api/interviews/:id/consent-links`、有効期限 1日、`purpose: "meeting"`)を作り、
   チャットに貼る文面(団体名・未成年なら保護者へのお願い・リンク)をコピーできるようにする。
   4秒ごとに面接を読み直し、**画面を開いたときと違う同意の記録**が届いたら次へ進む(事前に送ったリンクへの回答も含む)
+- `purpose: "meeting"` のリンクへの回答は `atInterview: true` で記録する。事前の回答(`advance`)と違い、面接の場での回答なので、
+  断られたときは予定日時の前でもすぐに「録画なしで行った面接」として評価に進み(`heldWithoutRecording`)、評価の催促も回答の時刻から数える。
+  お知らせのメールも「当日の撮影の前に口頭でも確認」の一文を入れない
 - 同意の記録(「録画しない」など)がすでにある面接は、サーバーがリンクを作らないため、リンクの選択肢を出さない(口頭か紙)
 - 口頭: 同意文は同じものを表示し(読み上げ・画面の共有用)、聞き取った内容を面接官が入力する。録画の開始後に口頭で確かめ直すよう案内する
 
@@ -98,9 +107,10 @@ Meet の画面には、ほかの面接官の映像も映る。候補者の追跡
   一覧・今日の面接・予定・比較一覧に「オンライン」「Meet」の表示
 - メール: `interviewLines` に `Google Meet: <リンク>` と場所の表示(`placeLabel`)。前日のお知らせは、オンライン面接があれば録画の手順を一言添える
 - .ics: オンラインで場所が空なら `LOCATION` に Meet のリンク。`DESCRIPTION` の先頭に `Google Meet: <リンク>`。題名に「[オンライン]」
-- 面接の CSV(管理者)に「形式」の列。記録票の場所も `placeLabel`
-- 表情の比較(`/api/interviews/:id/expression-compare`): 比べる面接の映像の元は、計測があれば代表の録画、なければ録画・形式から決め、
-  同じ映像の元の面接だけで分布を作る。画面には「これまでのオンライン面接の」と出す。比較一覧は Meet の値に「Meet」を付ける
+- 面接の CSV(管理者)の末尾に「形式」「表情の値の映像」の列(既存の列の位置は変えない)。記録票の場所も `placeLabel`
+- 表情の比較(`/api/interviews/:id/expression-compare[?capture=camera|screen]`): 確認画面は選んでいる録画の映像の元を指定する
+  (1つの面接に対面と Meet の録画があっても、それぞれ同じ映像の元の面接と比べる)。指定がなければ、計測があれば代表の録画、
+  なければ録画・形式から決める。画面には「これまでのオンライン面接の」と出す。比較一覧は Meet の値に「Meet」を付ける
 
 ## 6. テスト
 

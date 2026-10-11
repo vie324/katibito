@@ -169,6 +169,8 @@ export class LiveAnalyzer {
   private runOnVideo(): void {
     this.viaTrack = false;
     document.addEventListener("visibilitychange", this.onVisibility);
+    // 裏に回っている間に切り替えた場合: 表に戻るまでは計測できないので、いまから「非表示」の区間とする
+    if (document.visibilityState === "hidden" && this.hiddenSince === null) this.hiddenSince = performance.now();
     this.stopLoop = onFrames(this.video, (now) => this.frame(now, null));
   }
 
@@ -177,8 +179,11 @@ export class LiveAnalyzer {
     else this.tracker.reset();
   }
 
-  /** 録画開始。t0 は MediaRecorder の start 時刻 */
-  beginRecording(t0: number): void {
+  /**
+   * 録画開始。t0 は MediaRecorder の start 時刻。
+   * late = 計測の準備より先に録画が始まっていた(録画の先頭からいままでは計測していない区間として残す)
+   */
+  beginRecording(t0: number, late = false): void {
     this.t0 = t0;
     const cur = this.tracker.current;
     this.builder = new FaceTrackBuilder(
@@ -193,6 +198,10 @@ export class LiveAnalyzer {
       }),
       30 * 60 * 16,
     );
+    if (late) {
+      const endMs = Math.max(0, performance.now() - t0);
+      if (endMs > 0) this.builder.addGap({ startMs: 0, endMs, reason: "stalled" });
+    }
   }
 
   /** 録画中の顔トラック(途中保存用のコピー) */

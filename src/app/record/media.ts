@@ -167,76 +167,88 @@ export async function openScreenCapture(audioId: string | null, quality: { width
     // 対応していない・時間切れ: 切り替わっても録画はできる
   }
 
-  const videoTrack = display.getVideoTracks()[0];
-  const tabTrack = display.getAudioTracks()[0] ?? null;
-  const ac = new AudioContext();
-  const dest = ac.createMediaStreamDestination();
-  const buf = new Float32Array(1024);
-  const tap = (track: MediaStreamTrack) => {
-    const src = ac.createMediaStreamSource(new MediaStream([track]));
-    const an = ac.createAnalyser();
-    an.fftSize = 1024;
-    src.connect(an);
-    src.connect(dest);
-    return { src, an };
-  };
-  const tab = tabTrack ? tap(tabTrack) : null;
-
+  let ac: AudioContext | null = null;
   let mic: MediaStream | null = null;
-  let micNode: { src: MediaStreamAudioSourceNode; an: AnalyserNode } | null = null;
-  let micError: string | null = null;
   try {
-    mic = await openMic(audioId);
-    const t = mic.getAudioTracks()[0];
-    if (t) micNode = tap(t);
-  } catch (e) {
-    micError = micErrorMessage(e);
-  }
-  if (ac.state === "suspended") await ac.resume().catch(() => undefined);
+    const videoTrack = display.getVideoTracks()[0];
+    const tabTrack = display.getAudioTracks()[0] ?? null;
+    const actx = new AudioContext();
+    ac = actx;
+    const dest = actx.createMediaStreamDestination();
+    const buf = new Float32Array(1024);
+    const tap = (track: MediaStreamTrack) => {
+      const src = actx.createMediaStreamSource(new MediaStream([track]));
+      const an = actx.createAnalyser();
+      an.fftSize = 1024;
+      src.connect(an);
+      src.connect(dest);
+      return { src, an };
+    };
+    const tab = tabTrack ? tap(tabTrack) : null;
 
-  const stream = new MediaStream([videoTrack, ...dest.stream.getAudioTracks()]);
-  let closed = false;
-  const capture: ScreenCapture = {
-    stream,
-    surface: (videoTrack.getSettings() as { displaySurface?: string }).displaySurface ?? null,
-    hasTabAudio: tab !== null,
-    hasMic: micNode !== null,
-    micError,
-    levels: () => ({ tab: tab ? rmsOf(tab.an, buf) : null, mic: micNode ? rmsOf(micNode.an, buf) : null }),
-    async replaceMic(id) {
-      const next = await openMic(id).catch((e) => {
-        capture.micError = micErrorMessage(e);
-        return null;
-      });
-      if (closed) {
-        stopStream(next);
-        return;
-      }
-      micNode?.src.disconnect();
-      stopStream(mic);
-      mic = next;
-      micNode = null;
-      const t = next?.getAudioTracks()[0];
-      if (t) {
-        micNode = tap(t);
-        capture.micError = null;
-      }
-      capture.hasMic = micNode !== null;
-    },
-    onEnded: null,
-    close() {
-      if (closed) return;
-      closed = true;
-      stopStream(display);
-      stopStream(mic);
-      stopStream(stream);
-      void ac.close().catch(() => undefined);
-    },
-  };
-  videoTrack.addEventListener("ended", () => {
-    if (!closed) capture.onEnded?.();
-  });
-  return capture;
+    let micNode: { src: MediaStreamAudioSourceNode; an: AnalyserNode } | null = null;
+    let micError: string | null = null;
+    try {
+      mic = await openMic(audioId);
+      const t = mic.getAudioTracks()[0];
+      if (t) micNode = tap(t);
+    } catch (e) {
+      micError = micErrorMessage(e);
+    }
+    if (actx.state === "suspended") await actx.resume().catch(() => undefined);
+
+    const stream = new MediaStream([videoTrack, ...dest.stream.getAudioTracks()]);
+    let closed = false;
+    // マイクの切り替えが重なったとき、最後に選んだものだけを使う
+    let micSeq = 0;
+    const capture: ScreenCapture = {
+      stream,
+      surface: (videoTrack.getSettings() as { displaySurface?: string }).displaySurface ?? null,
+      hasTabAudio: tab !== null,
+      hasMic: micNode !== null,
+      micError,
+      levels: () => ({ tab: tab ? rmsOf(tab.an, buf) : null, mic: micNode ? rmsOf(micNode.an, buf) : null }),
+      async replaceMic(id) {
+        const seq = ++micSeq;
+        let err: string | null = null;
+        const next = await openMic(id).catch((e) => {
+          err = micErrorMessage(e);
+          return null;
+        });
+        if (closed || seq !== micSeq) {
+          stopStream(next);
+          return;
+        }
+        micNode?.src.disconnect();
+        stopStream(mic);
+        mic = next;
+        micNode = null;
+        const t = next?.getAudioTracks()[0];
+        if (t) micNode = tap(t);
+        capture.hasMic = micNode !== null;
+        capture.micError = micNode ? null : err;
+      },
+      onEnded: null,
+      close() {
+        if (closed) return;
+        closed = true;
+        stopStream(display);
+        stopStream(mic);
+        stopStream(stream);
+        void actx.close().catch(() => undefined);
+      },
+    };
+    videoTrack.addEventListener("ended", () => {
+      if (!closed) capture.onEnded?.();
+    });
+    return capture;
+  } catch (e) {
+    // 共有を始めたあとで失敗したら、共有とマイクを止めてから知らせる(共有中の表示が残らないように)
+    stopStream(display);
+    stopStream(mic);
+    void (ac as AudioContext | null)?.close().catch(() => undefined);
+    throw e;
+  }
 }
 
 /** 画面の共有を始められなかったときの案内。選ばずに閉じた(キャンセル)ときは null */

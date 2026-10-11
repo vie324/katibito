@@ -85,7 +85,7 @@ describe("メールのお知らせ(出来事ごと)", () => {
     });
     smtp.mails.length = 0;
     await readyRecording(server, admin, iid, "dev-mail-meet", "screen");
-    const until = Date.now() + 5000;
+    const until = Date.now() + 15_000;
     let m: ReceivedMail | undefined;
     while (!(m = to(smtp.mails, "alice@example.jp").find((x) => x.subject.includes("録画が共有されました"))) && Date.now() < until) await sleep(20);
     expect(m).toBeDefined();
@@ -290,7 +290,8 @@ describe("APP_URL が未設定のサーバー", () => {
       expect((await admin.req("PUT", "/api/me/notify", { email: "boss@example.jp" }, { headers: { Origin: server.base } })).status).toBe(200);
       smtp.mails.length = 0;
       await readyRecording(server, admin, iid, "dev-nolink");
-      await smtp.waitFor(1);
+      // 録画の仕上げ(再生用の MP4 の作成など)のあとに届くため、ほかのテストと並んで重いときは時間がかかる
+      await smtp.waitFor(1, 15_000);
       const m = to(smtp.mails, "alice@example.jp")[0];
       expect(m.subject).toContain("録画が共有されました");
       expect(m.text).not.toContain("/interviews/");

@@ -53,8 +53,9 @@ function sharedAt(iv: Interview): number | null {
   const ready = iv.recordings.filter((r) => r.status === "ready" || r.status === "purged");
   if (ready.length > 0) return Math.max(...ready.map((r) => Date.parse(r.createdAt) + (r.durationMs ?? 0)));
   if (iv.recordingDeclined && iv.consent) {
-    // 事前のオンライン同意で断られた場合、面接の日時が分からなければ催促しない(面接の前に催促してしまうため)
-    if (iv.consent.method === "online" && !iv.scheduledAt) return null;
+    // 事前のオンライン同意で断られた場合、面接の日時が分からなければ催促しない(面接の前に催促してしまうため)。
+    // オンライン面接の最中に送ったリンクへの回答は、面接の場での回答なので、その時刻から数える
+    if (iv.consent.method === "online" && !iv.consent.atInterview && !iv.scheduledAt) return null;
     return Math.max(Date.parse(iv.consent.obtainedAt), iv.scheduledAt ? Date.parse(iv.scheduledAt) : 0);
   }
   return null;
