@@ -71,18 +71,34 @@ export function buildIcs(events: IcsEvent[], calendarName: string): string {
 
 /** 面接1件分の予定(一覧の項目から) */
 export function interviewEvent(
-  it: { id: string; scheduledAt: string | null; plannedMinutes: number | null; round: string; location: string; candidate: { displayName: string } },
-  opts: { orgName: string; interviewerNames: string[] },
+  it: {
+    id: string;
+    scheduledAt: string | null;
+    plannedMinutes: number | null;
+    round: string;
+    location: string;
+    format: "inPerson" | "online";
+    meetUrl: string | null;
+    candidate: { displayName: string };
+  },
+  opts: { orgName: string; interviewerNames: string[]; origin?: string },
 ): IcsEvent | null {
   if (!it.scheduledAt) return null;
-  const url = `${window.location.origin}/interviews/${it.id}`;
+  const url = `${opts.origin ?? window.location.origin}/interviews/${it.id}`;
+  // オンライン面接で場所が空なら、場所に Meet のリンクを入れる(カレンダーアプリで押して参加できる)
+  const location = it.location || (it.format === "online" ? (it.meetUrl ?? "オンライン(Google Meet)") : "");
   return {
     uid: `${it.id}@katibito`,
     start: it.scheduledAt,
     minutes: Math.max(15, it.plannedMinutes ?? 30),
-    summary: `面接: ${it.candidate.displayName}${it.round ? `(${it.round})` : ""}`,
-    location: it.location,
-    description: [opts.orgName && `${opts.orgName} の面接`, opts.interviewerNames.length > 0 && `面接官: ${opts.interviewerNames.join("・")}`, url]
+    summary: `面接: ${it.candidate.displayName}${it.round ? `(${it.round})` : ""}${it.format === "online" ? "[オンライン]" : ""}`,
+    location,
+    description: [
+      it.meetUrl && `Google Meet: ${it.meetUrl}`,
+      opts.orgName && `${opts.orgName} の面接`,
+      opts.interviewerNames.length > 0 && `面接官: ${opts.interviewerNames.join("・")}`,
+      `面接の記録: ${url}`,
+    ]
       .filter(Boolean)
       .join("\n"),
     url,

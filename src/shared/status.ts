@@ -9,16 +9,17 @@ export function submittedEvaluations(evals: Iterable<Evaluation>): Evaluation[] 
 type DeclineLike = {
   recordingDeclined: boolean;
   scheduledAt: string | null;
-  consent: { method: ConsentRecord["method"] } | null;
+  consent: { method: ConsentRecord["method"]; atInterview?: boolean } | null;
 };
 
 /**
  * 録画を断られた面接が、録画なしで行われたとみなせるか(評価の材料になるか)。
- * 事前のオンライン同意で断られた場合は、予定日時を過ぎるまでは面接の前なので材料にしない。
+ * 事前のオンライン同意で断られた場合は、予定日時を過ぎるまでは面接の前なので材料にしない
+ * (オンライン面接の最中に送ったリンクへの回答は、面接の場での回答なので材料にする)。
  */
 export function heldWithoutRecording(iv: DeclineLike, now = Date.now()): boolean {
   if (!iv.recordingDeclined) return false;
-  if (iv.consent?.method === "online" && iv.scheduledAt && Date.parse(iv.scheduledAt) > now) return false;
+  if (iv.consent?.method === "online" && !iv.consent.atInterview && iv.scheduledAt && Date.parse(iv.scheduledAt) > now) return false;
   return true;
 }
 

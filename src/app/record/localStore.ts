@@ -12,6 +12,8 @@ export type LocalRecording = {
   interviewId: string;
   candidateName: string;
   source: "live" | "file";
+  /** 録画中の映像の元(画面の共有 = Google Meet のタブなど)。古い記録にはない(カメラ) */
+  capture?: "camera" | "screen";
   mimeType: string;
   startedAt: string;
   endedAt: string | null;

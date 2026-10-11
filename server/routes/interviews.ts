@@ -10,6 +10,7 @@ import type {
   EvaluationsView,
   Interview,
   InterviewDetail,
+  InterviewFormat,
   InterviewListItem,
   InterviewTemplate,
   Note,
@@ -19,6 +20,7 @@ import type {
   UserPublic,
   Vote,
 } from "../../src/shared/types";
+import { normalizeMeetUrl } from "../../src/shared/meet";
 import { averageScore } from "../../src/shared/score";
 import { arr, bool, id, int, isoDate, obj, oneOf, str, ValidationError } from "../../src/shared/validate";
 import { canView } from "../access";
@@ -165,10 +167,14 @@ export function listItem(app: AppContext, iv: Interview, user: UserRecord): Inte
     round: iv.round,
     scheduledAt: iv.scheduledAt,
     location: iv.location,
+    format: iv.format,
+    meetUrl: iv.meetUrl,
     interviewerIds: iv.interviewerIds,
     createdAt: iv.createdAt,
     status: deriveStatus(iv, evals),
-    consent: iv.consent ? { recording: iv.consent.recording, analysis: iv.consent.analysis, method: iv.consent.method } : null,
+    consent: iv.consent
+      ? { recording: iv.consent.recording, analysis: iv.consent.analysis, method: iv.consent.method, atInterview: iv.consent.atInterview ?? false }
+      : null,
     recordingDeclined: iv.recordingDeclined,
     recordingCount: iv.recordings.filter((r) => r.status !== "deleted").length,
     readyRecordingCount: ready.length,
@@ -212,6 +218,22 @@ function parseCandidate(v: unknown): Candidate {
     minor,
     note: str(o.note, "メモ", { max: 1000, optional: true, multiline: true }),
   };
+}
+
+/** Google Meet のリンク。空なら null。meet.google.com のリンクだけを受け付ける */
+function parseMeetUrl(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  const s = str(v, "Google Meet のリンク", { max: 300, optional: true });
+  if (!s) return null;
+  const url = normalizeMeetUrl(s);
+  if (!url) throw new ValidationError("Google Meet のリンク(https://meet.google.com/… の形)を入れてください");
+  return url;
+}
+
+/** 面接の形式。指定がなければ、Meet のリンクがあればオンライン */
+function parseFormat(v: unknown, meetUrl: string | null): InterviewFormat {
+  if (v === undefined || v === null) return meetUrl ? "online" : "inPerson";
+  return oneOf(v, "面接の形式", ["inPerson", "online"] as const);
 }
 
 function parseInterviewers(app: AppContext, v: unknown): string[] {
@@ -273,6 +295,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       body.questions === undefined
         ? { questions: template.questions.map((x) => x.text), minutes: template.questions.map((x) => x.minutes) }
         : parseQuestions(body.questions);
+    const meetUrl = parseMeetUrl(body.meetUrl);
     const iv: Interview = {
       id: newId(),
       candidate: parseCandidate(body.candidate),
@@ -280,6 +303,8 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       round: str(body.round, "面接の段階", { max: 20, optional: true }),
       scheduledAt: isoDate(body.scheduledAt, "面接日時"),
       location: str(body.location, "場所", { max: 100, optional: true }),
+      format: parseFormat(body.format, meetUrl),
+      meetUrl,
       interviewerIds: parseInterviewers(app, body.interviewerIds),
       questions: q.questions,
       questionMinutes: q.minutes,
@@ -319,6 +344,7 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
         }
         const template = templateOf(store.settings, typeof o.templateId === "string" ? o.templateId : null);
         const id0 = newId();
+        const meetUrl = parseMeetUrl(o.meetUrl);
         const iv: Interview = {
           id: id0,
           candidate: parseCandidate(o.candidate),
@@ -326,6 +352,8 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
           round: str(o.round, "面接の段階", { max: 20, optional: true }),
           scheduledAt: isoDate(o.scheduledAt, "面接日時"),
           location: str(o.location, "場所", { max: 100, optional: true }),
+          format: parseFormat(o.format, meetUrl),
+          meetUrl,
           interviewerIds: parseInterviewers(app, o.interviewerIds),
           questions: template.questions.map((q) => q.text),
           questionMinutes: template.questions.map((q) => q.minutes),
@@ -374,6 +402,8 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       if (body.candidate !== undefined) patch.candidate = parseCandidate(body.candidate);
       if (body.scheduledAt !== undefined) patch.scheduledAt = isoDate(body.scheduledAt, "面接日時");
       if (body.location !== undefined) patch.location = str(body.location, "場所", { max: 100, optional: true });
+      if (body.meetUrl !== undefined) patch.meetUrl = parseMeetUrl(body.meetUrl);
+      if (body.format !== undefined) patch.format = oneOf(body.format, "面接の形式", ["inPerson", "online"] as const);
       if (body.round !== undefined) patch.round = str(body.round, "面接の段階", { max: 20, optional: true });
       if (body.interviewerIds !== undefined) patch.interviewerIds = parseInterviewers(app, body.interviewerIds);
       if (body.questions !== undefined) {
@@ -421,7 +451,11 @@ export function registerInterviewRoutes(r: Router, app: AppContext): void {
       const recording = bool(body.recording, "録画への同意");
       const analysis = bool(body.analysis, "表情の計測への同意");
       if (analysis && !recording) throw new ValidationError("表情の計測には録画への同意が必要です");
-      const method = oneOf(body.method, "同意の方法", ["onscreen", "paper"] as const);
+      const method = oneOf(body.method, "同意の方法", ["onscreen", "paper", "verbal"] as const);
+      // 口頭の確認は、候補者が画面の前にいないオンライン面接(Google Meet)のときだけ
+      if (method === "verbal" && iv.format !== "online") {
+        throw new ValidationError("口頭での確認は、オンライン面接(Google Meet)の面接のときだけ記録できます");
+      }
       const candidateName = str(body.candidateName, "本人の氏名", { max: 60, min: recording ? 1 : 0, optional: !recording });
       const guardianName = str(body.guardianName, "保護者の氏名", { max: 60, optional: true });
       if (recording && isMinor(iv.candidate) && !guardianName) {

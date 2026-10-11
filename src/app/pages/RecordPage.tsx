@@ -1,5 +1,7 @@
 // 当日の撮影: 同意 → 撮影準備(カメラ・候補者の顔の選択)→ 録画 → 送信。
 // 映像はこの端末に保存しながら、録画中から順次サーバーへ送る。
+// オンライン面接(Google Meet)では、カメラの代わりに Meet のタブを画面の共有で受け取って録画する
+// (映像は Meet の画面、音声は Meet のタブの音とこの端末のマイクを混ぜたもの)。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickBoxAt, boxCenter } from "../../analysis/candidate";
@@ -18,9 +20,12 @@ import {
   listDevices,
   loadDeviceChoice,
   openCamera,
+  openScreenCapture,
   saveDeviceChoice,
+  screenErrorMessage,
   stopStream,
   type DeviceChoice,
+  type ScreenCapture,
 } from "../record/media";
 import { LocalRecorder, pickMimeType } from "../record/recorder";
 import { uploader } from "../record/uploader";
@@ -40,7 +45,16 @@ type Checks = {
   light: { ok: boolean | null; text: string };
   others: number;
   mic: { ok: boolean | null; level: number };
+  /** Meet のタブの音声(オンライン面接のときだけ) */
+  tab: { ok: boolean | null; level: number } | null;
 };
+
+/** 録画する映像の元: この端末のカメラ(対面)か、Google Meet のタブ(オンライン) */
+type Source = "camera" | "screen";
+
+type ScreenInfo = { surface: string | null; hasTabAudio: boolean; hasMic: boolean; micError: string | null };
+
+const SURFACE_LABEL: Record<string, string> = { window: "ウィンドウ", monitor: "画面全体" };
 
 export default function RecordPage({ id }: { id: string }) {
   const { settings } = useSession();
@@ -115,11 +129,16 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
   const analyzerRef = useRef<LiveAnalyzer | null>(null);
   const recorderRef = useRef<LocalRecorder | null>(null);
   const wakeRef = useRef<WakeLockSentinel | null>(null);
+  const screenRef = useRef<ScreenCapture | null>(null);
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  /** 映像・音声を取り直すたびに進める番号。待っている間に切り替え・画面の移動があれば、遅れて届いたものは使わずに止める */
+  const mediaGenRef = useRef(0);
 
   const [choice, setChoice] = useState<DeviceChoice>(loadDeviceChoice);
   const [devices, setDevices] = useState<{ videos: MediaDeviceInfo[]; audios: MediaDeviceInfo[] }>({ videos: [], audios: [] });
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [cameraReady, setCameraReady] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [mediaReady, setMediaReady] = useState(false);
   const [engineState, setEngineState] = useState<{ stage: string; fraction: number; error: string | null; ready: boolean }>({
     stage: "",
     fraction: 0,
@@ -143,6 +162,12 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
   const [faceLostMs, setFaceLostMs] = useState(0);
   const [localId, setLocalId] = useState<string | null>(null);
   const [hiddenNotice, setHiddenNotice] = useState(false);
+  const [source, setSource] = useState<Source>(iv.format === "online" ? "screen" : "camera");
+  const [screen, setScreen] = useState<ScreenInfo | null>(null);
+  const [screenNote, setScreenNote] = useState<string | null>(null);
+  const [choosing, setChoosing] = useState(false);
+  /** 録画中に画面の共有が止まり、録画を終えた */
+  const [shareStopped, setShareStopped] = useState(false);
   const [confirmNode, confirm] = useConfirm();
 
   useLeaveGuard(
@@ -150,45 +175,104 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     "録画中です。このページを離れると録画が止まります。録画を終了してから移動してください。",
   );
 
-  // ---------------------------------------------------------------- カメラ
-  const startCamera = useCallback(async (c: DeviceChoice) => {
-    setCameraError(null);
-    setCameraReady(false);
+  // ---------------------------------------------------------------- カメラ・画面の共有
+  /** いまの映像・音声を止める(カメラ・画面の共有とも)。取得の途中のものも無効にする */
+  const releaseMedia = useCallback(() => {
+    mediaGenRef.current++;
     analyzerRef.current?.stop();
     analyzerRef.current = null;
     audioRef.current?.close();
     audioRef.current = null;
     stopStream(streamRef.current);
     streamRef.current = null;
+    screenRef.current?.close();
+    screenRef.current = null;
+  }, []);
+
+  /**
+   * 取得した映像をプレビューに映し、音量の計測を始める。gen が古くなっていたら(待っている間に切り替えた等)何もせず false。
+   * 呼び出し側は false のとき、取得したものを止めること
+   */
+  const attach = useCallback(async (stream: MediaStream, gen: number): Promise<boolean> => {
+    if (gen !== mediaGenRef.current) return false;
+    streamRef.current = stream;
+    const video = videoRef.current;
+    if (video) {
+      video.srcObject = stream;
+      await video.play().catch(() => undefined);
+      await new Promise<void>((resolve) => {
+        if (video.videoWidth > 0) resolve();
+        else video.onloadedmetadata = () => resolve();
+        setTimeout(resolve, 3000);
+      });
+    }
+    let audio: AudioEngine | null = null;
+    try {
+      audio = await AudioEngine.create(stream);
+    } catch (e) {
+      console.warn("[record] 音量の計測を開始できません", e);
+    }
+    if (gen !== mediaGenRef.current) {
+      audio?.close();
+      return false;
+    }
+    audioRef.current = audio;
+    setDevices(await listDevices());
+    if (gen !== mediaGenRef.current) return false;
+    setMediaReady(true);
+    return true;
+  }, []);
+
+  const startCamera = useCallback(async (c: DeviceChoice) => {
+    setMediaError(null);
+    setMediaReady(false);
+    releaseMedia();
+    const gen = mediaGenRef.current;
     try {
       const stream = await openCamera(c, quality);
-      streamRef.current = stream;
-      const video = videoRef.current;
-      if (video) {
-        video.srcObject = stream;
-        await video.play().catch(() => undefined);
-        await new Promise<void>((resolve) => {
-          if (video.videoWidth > 0) resolve();
-          else video.onloadedmetadata = () => resolve();
-          setTimeout(resolve, 3000);
-        });
-      }
-      try {
-        audioRef.current = await AudioEngine.create(stream);
-      } catch (e) {
-        console.warn("[record] 音量の計測を開始できません", e);
-      }
-      setDevices(await listDevices());
-      setCameraReady(true);
+      if (!(await attach(stream, gen))) stopStream(stream);
     } catch (e) {
-      setCameraError(cameraErrorMessage(e));
+      if (gen === mediaGenRef.current) setMediaError(cameraErrorMessage(e));
     }
-  }, [quality]);
+  }, [quality, releaseMedia, attach]);
+
+  /** Meet のタブを選んでもらう(ボタンの操作から呼ぶ。画面の共有はユーザーの操作が必要) */
+  const chooseScreen = async () => {
+    setMediaError(null);
+    setScreenNote(null);
+    setMediaReady(false);
+    setScreen(null);
+    releaseMedia();
+    const gen = mediaGenRef.current;
+    setChoosing(true);
+    try {
+      const cap = await openScreenCapture(choice.audioId, quality);
+      // マイクの許可を待っている間に、カメラへの切り替え・画面の移動があった
+      if (gen !== mediaGenRef.current) {
+        cap.close();
+        return;
+      }
+      screenRef.current = cap;
+      cap.onEnded = () => shareEndedRef.current();
+      setScreen({ surface: cap.surface, hasTabAudio: cap.hasTabAudio, hasMic: cap.hasMic, micError: cap.micError });
+      if (!(await attach(cap.stream, gen))) cap.close();
+    } catch (e) {
+      if (gen !== mediaGenRef.current) return;
+      const msg = screenErrorMessage(e);
+      if (msg) setMediaError(msg);
+      else setScreenNote("Meet のタブが選ばれませんでした。もう一度「Meet のタブを選ぶ」を押してください。");
+    } finally {
+      if (gen === mediaGenRef.current) setChoosing(false);
+    }
+  };
 
   useEffect(() => {
-    void startCamera(choice);
+    // カメラはすぐに起動する。Meet のタブは「Meet のタブを選ぶ」を押してから
+    if (source === "camera") void startCamera(choice);
     void storageEstimate().then(setStorage);
     return () => {
+      // 取得の途中のもの(マイクの許可待ちの画面の共有など)は、届いても使わずに止める
+      mediaGenRef.current++;
       // 録画中に画面を離れた場合も、そこまでの録画は保存して送信する
       const track = analyzerRef.current?.stop() ?? null;
       const r = recorderRef.current;
@@ -196,30 +280,63 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
       uploader.activeRecording = null;
       audioRef.current?.close();
       stopStream(streamRef.current);
+      screenRef.current?.close();
       void wakeRef.current?.release().catch(() => undefined);
     };
-    // 機器の切り替えは changeDevice から行う
+    // 機器・映像の元の切り替えは changeDevice / changeSource から行う
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const changeSource = (s: Source) => {
+    if (s === source || step === "recording") return;
+    setSource(s);
+    setMediaError(null);
+    setScreenNote(null);
+    setScreen(null);
+    setMediaReady(false);
+    setChoosing(false);
+    releaseMedia();
+    if (s === "camera") void startCamera(choice);
+  };
 
   const changeDevice = (patch: Partial<DeviceChoice>) => {
     const next = { ...choice, ...patch };
     setChoice(next);
     saveDeviceChoice(next);
-    void startCamera(next);
+    if (source === "camera") {
+      void startCamera(next);
+      return;
+    }
+    // Meet の録画中の準備: 共有はそのままで、マイクだけ切り替える
+    const cap = screenRef.current;
+    if (cap && patch.audioId !== undefined) {
+      void cap.replaceMic(next.audioId).then(() => {
+        // 待っている間に Meet のタブを選び直していたら、新しい共有の表示を上書きしない
+        if (screenRef.current === cap) setScreen((s) => (s ? { ...s, hasMic: cap.hasMic, micError: cap.micError } : s));
+      });
+    }
   };
 
   // ---------------------------------------------------------------- 顔の計測(同意がある場合のみ)
+  // モデルは画面を開いた時点で読み込み始める(Meet のタブを選んですぐ録画を始めても計測が間に合うように)
   useEffect(() => {
-    if (!analysisAllowed || !cameraReady || step === "finished") return;
+    if (analysisAllowed) void loadFaceEngine().catch(() => undefined);
+  }, [analysisAllowed]);
+
+  useEffect(() => {
+    if (!analysisAllowed || !mediaReady || step === "finished") return;
     let alive = true;
     loadFaceEngine((p) => alive && setEngineState((s) => ({ ...s, stage: p.stage, fraction: p.fraction })))
       .then((engine) => {
         if (!alive || !videoRef.current) return;
         if (!analyzerRef.current) {
-          const a = new LiveAnalyzer(engine, videoRef.current, audioRef.current);
+          // 映像のトラックから直接計測する(この画面が裏に回っても計測が止まらないように。使えなければ video 要素から)
+          const a = new LiveAnalyzer(engine, videoRef.current, audioRef.current, streamRef.current?.getVideoTracks()[0] ?? null);
           analyzerRef.current = a;
           a.run();
+          // 計測のモデルの読み込みより先に録画を始めていたら、ここから記録する(それまでの時間は計測なしとして残す)
+          const r = recorderRef.current;
+          if (r && !r.isStopped && r.t0 !== null) a.beginRecording(r.t0, true);
         }
         setEngineState((s) => ({ ...s, ready: true, error: null }));
       })
@@ -229,27 +346,42 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     return () => {
       alive = false;
     };
-  }, [analysisAllowed, cameraReady, step]);
+  }, [analysisAllowed, mediaReady, step]);
 
   // ---------------------------------------------------------------- 準備のチェック(4Hz)
   useEffect(() => {
-    if (!cameraReady) return;
+    if (!mediaReady) return;
     const lumaCanvas = document.createElement("canvas");
     lumaCanvas.width = 64;
     lumaCanvas.height = 36;
     let micPeakAt = 0;
     let micLevel = 0;
+    let tabPeakAt = 0;
+    let tabLevel = 0;
     let seenHistory: boolean[] = [];
     let lastLuma: number | null = null;
     let lumaAt = 0;
     const id = setInterval(() => {
       const now = performance.now();
       const audio = audioRef.current;
-      if (audio) {
+      const cap = screenRef.current;
+      if (cap) {
+        // オンライン面接: Meet のタブの音と面接官のマイクを別々に確かめる
+        const lv = cap.levels();
+        if (lv.tab !== null) {
+          tabLevel = Math.max(lv.tab, tabLevel * 0.85);
+          if (lv.tab > 0.01) tabPeakAt = now;
+        }
+        if (lv.mic !== null) {
+          micLevel = Math.max(lv.mic, micLevel * 0.85);
+          if (lv.mic > 0.02) micPeakAt = now;
+        }
+      } else if (audio) {
         const t = audio.tick(now);
         micLevel = Math.max(t.rms, micLevel * 0.85);
         if (t.rms > 0.02) micPeakAt = now;
       }
+      const online = source === "screen";
       const a = analyzerRef.current;
       const st = a?.status;
       const cand = st && st.candidate >= 0 ? st.boxes[st.candidate] : null;
@@ -267,12 +399,16 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
           ? { ok: null, text: analysisAllowed ? "準備中" : "計測しません" }
           : seenRate >= 0.7
             ? { ok: true, text: "候補者の顔を検出しています" }
-            : { ok: false, text: "顔が見つかりません。カメラの向きを調整してください" },
+            : online
+              ? { ok: false, text: "顔が見つかりません。Meet で候補者のカメラがオンになっているか確かめ、候補者を固定表示(ピン留め)にしてください" }
+              : { ok: false, text: "顔が見つかりません。カメラの向きを調整してください" },
         size: !cand
           ? { ok: null, text: "—" }
           : h >= 0.12
             ? { ok: true, text: `映像の高さの ${Math.round(h * 100)}%` }
-            : { ok: false, text: `映像の高さの ${Math.round(h * 100)}%。カメラを近づけるかズームしてください(12%以上)` },
+            : online
+              ? { ok: false, text: `映像の高さの ${Math.round(h * 100)}%。Meet で候補者を固定表示(ピン留め)にすると大きく映ります(12%以上)` }
+              : { ok: false, text: `映像の高さの ${Math.round(h * 100)}%。カメラを近づけるかズームしてください(12%以上)` },
         light:
           lastLuma === null
             ? { ok: null, text: "—" }
@@ -283,13 +419,14 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
                 : { ok: true, text: "適切です" },
         others: st ? Math.max(0, st.boxes.length - (cand ? 1 : 0)) : 0,
         mic: { ok: now - micPeakAt < 8000 ? true : null, level: micLevel },
+        tab: cap ? { ok: !cap.hasTabAudio ? false : now - tabPeakAt < 8000 ? true : null, level: tabLevel } : null,
       });
       if (step === "recording" && a) {
         setFaceLostMs(st && st.lastSeenAt > 0 ? now - st.lastSeenAt : 0);
       }
     }, 250);
     return () => clearInterval(id);
-  }, [cameraReady, analysisAllowed, step]);
+  }, [mediaReady, analysisAllowed, step, source]);
 
   const pickCandidate = (x: number, y: number) => {
     const a = analyzerRef.current;
@@ -314,7 +451,8 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     const onVis = () => {
       if (document.visibilityState === "visible") {
         void acquireWakeLock();
-        setHiddenNotice(true);
+        // 映像のトラックから直接計測していれば、裏に回っている間も計測は続いている
+        if (analyzerRef.current?.pausesWhenHidden) setHiddenNotice(true);
       }
     };
     document.addEventListener("visibilitychange", onVis);
@@ -326,6 +464,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     if (!stream) return;
     setStarting(true);
     setWarning(null);
+    setShareStopped(false);
     try {
       await requestPersistence();
       const recorder = new LocalRecorder(stream, {
@@ -333,8 +472,10 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
         candidateName: iv.candidate.displayName,
         analysisAllowed,
         videoBitsPerSecond: quality.videoBitsPerSecond,
+        capture: source,
       });
       recorder.onWarning = (m) => setWarning(m);
+      recorder.onChunk = () => beatRef.current();
       recorderRef.current = recorder;
       const t0 = await recorder.start();
       analyzerRef.current?.beginRecording(t0);
@@ -345,6 +486,11 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
       setQStartMs(null);
       await acquireWakeLock();
       setStep("recording");
+      // 始めている間に画面の共有が止まっていた: そこまでの(短い)録画を残して終える
+      if (source === "screen" && stream.getVideoTracks()[0]?.readyState === "ended") {
+        setShareStopped(true);
+        await stopRecording();
+      }
     } catch (e) {
       setWarning(errorMessage(e));
     } finally {
@@ -370,8 +516,28 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
     audioRef.current = null;
     stopStream(streamRef.current);
     streamRef.current = null;
+    // Meet の画面の共有も終える(Meet 自体はそのまま続く)
+    screenRef.current?.close();
+    screenRef.current = null;
     setStep("finished");
   }, [setStep]);
+
+  // 画面の共有が止められた(Chrome の「共有を停止」・Meet のタブを閉じた など)
+  const shareEndedRef = useRef<() => void>(() => undefined);
+  shareEndedRef.current = () => {
+    // 録画を始めているか(画面の表示の切り替わりより先に、録画の状態で判断する)
+    const r = recorderRef.current;
+    if (r && !r.isStopped) {
+      setShareStopped(true);
+      // 始めている途中なら、始め終わったところで止める(startRecording が共有の終わりを見て止める)
+      if (r.t0 !== null) void stopRecording();
+      return;
+    }
+    releaseMedia();
+    setMediaReady(false);
+    setScreen(null);
+    setScreenNote("画面の共有が止まりました。続けるには、もう一度「Meet のタブを選ぶ」を押してください。");
+  };
 
   // 経過時間・顔トラックの途中保存・上限時間
   useEffect(() => {
@@ -407,6 +573,9 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
 
   // ライブ: 録画の経過時間を数秒ごとにサーバーへ知らせる(サーバー上の録画が作られてから)。
   // その場にいない人が、数秒遅れで録画を見ながらメモを取れるようになる
+  // 録画のチャンク(2秒ごと)が届いたときにも送る: この画面が裏に回る(Meet のタブを見ている)と
+  // タイマーが間引かれるが、録画の合図は時間どおりに届くため
+  const beatRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     if (step !== "recording" || !localId) return;
     const beat = async () => {
@@ -417,9 +586,19 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
         .liveHeartbeat(iv.id, rid, localId, { elapsedMs: Math.round(r.elapsedMs()), question: questionLabelRef.current })
         .catch(() => undefined);
     };
-    void beat();
-    const t = setInterval(() => void beat(), 5000);
-    return () => clearInterval(t);
+    let last = 0;
+    beatRef.current = () => {
+      const now = Date.now();
+      if (now - last < 4000) return;
+      last = now;
+      void beat();
+    };
+    beatRef.current();
+    const t = setInterval(() => beatRef.current(), 5000);
+    return () => {
+      clearInterval(t);
+      beatRef.current = () => undefined;
+    };
   }, [step, localId, iv.id]);
 
   // 面接室へのメッセージ(その場にいない人から)。録画の準備中から受け取る
@@ -491,6 +670,11 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
       <div className="page narrow">
         <h2>録画を終了しました — {iv.candidate.displayName}</h2>
         <div className="panel pad">
+          {shareStopped && (
+            <Notice kind="warn">
+              Meet の画面の共有が止まったため、録画を終了しました(そこまでの録画は保存して送信します)。面接を続ける場合は、面接の詳細から録画をもう一度始めてください(別の録画として保存されます)。
+            </Notice>
+          )}
           {done ? (
             <Notice kind="ok">送信が完了しました。面接の詳細画面で録画を再生できます。</Notice>
           ) : (
@@ -535,6 +719,7 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
         )}
         <span className="studio-cand">{iv.candidate.displayName}</span>
         <span className="spacer" />
+        {source === "screen" && <span className="badge meet-badge">Google Meet</span>}
         {!analysisAllowed && <span className="badge">表情の計測なし(同意なし)</span>}
         {recording && upload && (
           <span className="muted small num">
@@ -555,22 +740,44 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
               />
             )}
             {hidePreview && <div className="preview-cover">プレビューを隠しています(録画は続いています)</div>}
-            {!cameraReady && !cameraError && <div className="preview-cover">カメラを起動しています</div>}
+            {!mediaReady && !mediaError && (
+              <div className="preview-cover">
+                {source === "camera"
+                  ? "カメラを起動しています"
+                  : choosing
+                    ? "共有する Meet のタブを選んでください"
+                    : "「Meet のタブを選ぶ」を押すと、ここに Meet の画面が映ります"}
+              </div>
+            )}
           </div>
           {!recording && iv.consent?.method === "online" && (
             <Notice kind="info">
-              同意は事前にオンラインで入力されています(
+              同意は{iv.consent.atInterview ? " Meet のチャットで送ったリンクから" : "事前にオンラインで"}入力されています(
               {iv.consent.guardianName ? `保護者 ${iv.consent.guardianName}` : iv.consent.candidateName}
               ・録画 {iv.consent.recording ? "同意" : "不同意"}・表情の計測 {iv.consent.analysis ? "同意" : "不同意"})。
               撮影を始める前に、本人{iv.consent.guardianName ? "・保護者" : ""}に口頭でも確認してください。
             </Notice>
           )}
-          {lostWarn && <Notice kind="warn">候補者の顔が {Math.round(faceLostMs / 1000)} 秒間映っていません。カメラの向きを確認してください。</Notice>}
-          {cameraError && (
+          {!recording && iv.consent?.method === "verbal" && (
+            <Notice kind="info">
+              同意は口頭で確認済みとして記録されています({iv.consent.obtainedByName})。録画を始めたら、録画と表情の計測に同意いただいたことを口頭でもう一度確かめてください(確かめたことが録画にも残ります)。
+            </Notice>
+          )}
+          {lostWarn && (
+            <Notice kind="warn">
+              候補者の顔が {Math.round(faceLostMs / 1000)} 秒間映っていません。
+              {source === "screen" ? "Meet で候補者のカメラがオンか、固定表示(ピン留め)になっているか確認してください。" : "カメラの向きを確認してください。"}
+            </Notice>
+          )}
+          {mediaError && (
             <Notice kind="error">
-              {cameraError}
+              {mediaError}
               <div className="row-actions">
-                <button onClick={() => void startCamera(choice)}>再試行</button>
+                {source === "camera" ? (
+                  <button onClick={() => void startCamera(choice)}>再試行</button>
+                ) : (
+                  <button onClick={() => void chooseScreen()}>Meet のタブを選び直す</button>
+                )}
               </div>
             </Notice>
           )}
@@ -607,19 +814,78 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
           {!recording ? (
             <>
               <div className="panel">
+                <div className="panel-title">録画する映像</div>
+                <div className="pad source-switch" role="radiogroup" aria-label="録画する映像">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={source === "camera"}
+                    className={source === "camera" ? "seg on" : "seg"}
+                    disabled={choosing}
+                    onClick={() => changeSource("camera")}
+                  >
+                    カメラ<span className="seg-sub">対面の面接</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={source === "screen"}
+                    className={source === "screen" ? "seg on" : "seg"}
+                    disabled={choosing}
+                    onClick={() => changeSource("screen")}
+                  >
+                    Google Meet<span className="seg-sub">オンラインの面接</span>
+                  </button>
+                </div>
+              </div>
+
+              {source === "screen" && (
+                <div className="panel meet-steps">
+                  <div className="panel-title">Google Meet の録画</div>
+                  <div className="pad">
+                    <ol>
+                      <li>
+                        Meet に参加し、候補者を<strong>固定表示(ピン留め)</strong>にします
+                        {iv.meetUrl && (
+                          <a className="button small-btn" href={iv.meetUrl} target="_blank" rel="noopener noreferrer">
+                            Meet を開く
+                          </a>
+                        )}
+                      </li>
+                      <li>
+                        「Meet のタブを選ぶ」→ 表示された一覧の「Chrome タブ」から Meet のタブを選び、
+                        <strong>「タブの音声も共有する」をオン</strong>にして「共有」を押します
+                      </li>
+                    </ol>
+                    <button className={mediaReady ? "" : "primary"} disabled={choosing} onClick={() => void chooseScreen()}>
+                      {choosing ? "選んでいます…" : mediaReady ? "Meet のタブを選び直す" : "Meet のタブを選ぶ"}
+                    </button>
+                    {screenNote && <Notice kind="info">{screenNote}</Notice>}
+                    {screen && screen.surface && screen.surface !== "browser" && (
+                      <Notice kind="warn">
+                        タブではなく{SURFACE_LABEL[screen.surface] ?? "画面"}が共有されています。Meet の音声が録れないことがあるため、「Meet のタブを選び直す」で Meet のタブを選ぶことをおすすめします。
+                      </Notice>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="panel">
                 <div className="panel-title">機器</div>
                 <div className="pad form">
-                  <Field label="カメラ">
-                    <select value={choice.videoId ?? ""} onChange={(e) => changeDevice({ videoId: e.target.value || null })}>
-                      <option value="">既定のカメラ</option>
-                      {devices.videos.map((d, i) => (
-                        <option key={d.deviceId || i} value={d.deviceId}>
-                          {d.label || `カメラ ${i + 1}`}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="マイク">
+                  {source === "camera" && (
+                    <Field label="カメラ">
+                      <select value={choice.videoId ?? ""} onChange={(e) => changeDevice({ videoId: e.target.value || null })}>
+                        <option value="">既定のカメラ</option>
+                        {devices.videos.map((d, i) => (
+                          <option key={d.deviceId || i} value={d.deviceId}>
+                            {d.label || `カメラ ${i + 1}`}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <Field label={source === "screen" ? "マイク(面接官の声)" : "マイク"}>
                     <select value={choice.audioId ?? ""} onChange={(e) => changeDevice({ audioId: e.target.value || null })}>
                       <option value="">既定のマイク</option>
                       {devices.audios.map((d, i) => (
@@ -648,12 +914,31 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
                       )}
                     </>
                   )}
-                  <li className={`check-item ${checks?.mic.ok ? "pass" : "wait"}`}>
-                    <span className="mark">{checks?.mic.ok ? "●" : "○"}</span>
+                  {source === "screen" && (
+                    <li className={`check-item ${checks?.tab?.ok ? "pass" : checks?.tab?.ok === false ? "fail" : "wait"}`}>
+                      <span className="mark">{checks?.tab?.ok ? "●" : checks?.tab?.ok === false ? "×" : "○"}</span>
+                      <span className="name">Meet の音声</span>
+                      {screen && !screen.hasTabAudio ? (
+                        <span className="text">
+                          タブの音声が共有されていません。「Meet のタブを選び直す」を押し、「タブの音声も共有する」をオンにしてください
+                        </span>
+                      ) : (
+                        <span className="meter-bar" title="候補者が話すと動きます">
+                          <span style={{ width: `${Math.min(100, Math.round((checks?.tab?.level ?? 0) * 600))}%` }} />
+                        </span>
+                      )}
+                    </li>
+                  )}
+                  <li className={`check-item ${checks?.mic.ok ? "pass" : screen?.micError ? "fail" : "wait"}`}>
+                    <span className="mark">{checks?.mic.ok ? "●" : screen?.micError ? "×" : "○"}</span>
                     <span className="name">マイク</span>
-                    <span className="meter-bar">
-                      <span style={{ width: `${Math.min(100, Math.round((checks?.mic.level ?? 0) * 600))}%` }} />
-                    </span>
+                    {screen?.micError ? (
+                      <span className="text">{screen.micError}</span>
+                    ) : (
+                      <span className="meter-bar">
+                        <span style={{ width: `${Math.min(100, Math.round((checks?.mic.level ?? 0) * 600))}%` }} />
+                      </span>
+                    )}
                   </li>
                   <li className="check-item muted small">
                     <span className="mark">・</span>
@@ -666,15 +951,29 @@ function Studio({ detail, step, setStep }: { detail: InterviewDetail; step: Step
                 </ul>
               </div>
 
-              <Notice kind="info">
-                カメラは面接官の間から候補者の顔に向けて置いてください。画面が候補者に見えると気が散るため、外付けカメラの使用をおすすめします。
-              </Notice>
+              {source === "camera" ? (
+                <Notice kind="info">
+                  カメラは面接官の間から候補者の顔に向けて置いてください。画面が候補者に見えると気が散るため、外付けカメラの使用をおすすめします。
+                </Notice>
+              ) : (
+                <Notice kind="info">
+                  <ul className="tips">
+                    <li>面接中はこの画面を開いたままにしてください。Meet の映像はここに映ります。ミュートなどの操作は Meet のタブで行えます(切り替えている間も録画は続きます)。</li>
+                    <li>ヘッドホン・イヤホンの使用をおすすめします(スピーカーの音がマイクに入ると、候補者の声が二重に録音されます)。</li>
+                    <li>Meet の画面に映る面接官の映像や名前も録画に残ります。</li>
+                  </ul>
+                </Notice>
+              )}
               {warning && <Notice kind="error">{warning}</Notice>}
               <div className="row-actions">
                 <button className="quiet" onClick={() => navigate(`/interviews/${iv.id}`)}>
                   やめる
                 </button>
-                <button className="primary big" disabled={!cameraReady || starting || !mime} onClick={() => void startRecording()}>
+                <button
+                  className="primary big"
+                  disabled={!mediaReady || starting || !mime || (source === "screen" && !screen?.hasTabAudio)}
+                  onClick={() => void startRecording()}
+                >
                   {starting ? "開始しています" : "録画を開始"}
                 </button>
               </div>

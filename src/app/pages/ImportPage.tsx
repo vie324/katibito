@@ -104,6 +104,8 @@ export default function ImportPage({ id }: { id: string }) {
       const created = await api.createRecording(iv.id, {
         clientId: send.clientId,
         source: "file",
+        // オンライン面接に取り込む動画は Meet の録画とみなす(表情の比較をオンライン面接どうしで行う)
+        capture: iv.format === "online" ? "screen" : "camera",
         mimeType: guessMime(file),
         startedAt: new Date(file.lastModified || Date.now()).toISOString(),
         fileName: file.name,

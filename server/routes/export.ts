@@ -3,6 +3,7 @@
 
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import { CONSENT_METHOD_LABEL } from "../../src/shared/consent";
 import { formatClockMs } from "../../src/shared/time";
 import type { Interview, Transcript } from "../../src/shared/types";
 import { attachmentFile } from "../attachments";
@@ -98,7 +99,7 @@ export function registerExportRoutes(r: Router, app: AppContext): void {
             `表情の計測: ${c0.analysis ? "同意" : "不同意"}`,
             `本人: ${c0.candidateName}`,
             c0.guardianName ? `保護者: ${c0.guardianName}${c0.guardianRelation ? `(${c0.guardianRelation})` : ""}` : "",
-            `方法: ${c0.method === "paper" ? "紙の同意書" : c0.method === "online" ? "オンライン" : "画面"}`,
+            `方法: ${CONSENT_METHOD_LABEL[c0.method]}`,
             `記録: ${jstTime(c0.obtainedAt)}(${c0.obtainedByName})`,
             c0.withdrawnAt ? `取り消し: ${jstTime(c0.withdrawnAt)}(${c0.withdrawnScope === "all" ? "すべて" : "表情の計測"})` : "",
             "",

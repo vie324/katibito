@@ -117,6 +117,7 @@ export function InterviewListPage() {
             <Link key={it.id} to={`/interviews/${it.id}`} className="todo-row">
               <span className="num">{formatTime(it.scheduledAt)}</span>
               <span className="todo-name">{it.candidate.displayName}</span>
+              {it.format === "online" && <span className="online-tag">オンライン</span>}
               <span className="muted small">{[it.round, it.location].filter(Boolean).join(" ・ ")}</span>
               <span className="spacer" />
               {it.live ? (
@@ -192,6 +193,7 @@ export function InterviewListPage() {
                         <Link to={`/interviews/${it.id}`} onClick={(e) => e.stopPropagation()}>
                           {it.candidate.displayName}
                         </Link>
+                        {it.format === "online" && <span className="online-tag" title="オンライン面接(Google Meet)">オンライン</span>}
                         {(it.candidate.kana || it.round) && (
                           <div className="muted small">
                             {it.candidate.kana}

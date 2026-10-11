@@ -33,11 +33,18 @@ export function ExpressionSummaryView({
   const bandOk = !!compare?.band && compare.band.n >= compare.minN;
   const effective = scope === "auto" ? (bandOk ? "band" : "all") : scope;
   let target: CompareTarget | null = null;
+  // オンライン面接(Google Meet の画面)は、オンライン面接どうしで比べている
+  const online = compare?.capture === "screen";
   if (compare) {
     target =
       effective === "band" && compare.band
-        ? { label: `同じ年代(${compare.band.label})の`, n: compare.band.n, minN: compare.minN, values: compare.band.values }
-        : { label: "これまでの", n: compare.all.n, minN: compare.minN, values: compare.all.values };
+        ? {
+            label: `同じ年代(${compare.band.label})の${online ? "オンライン面接の" : ""}`,
+            n: compare.band.n,
+            minN: compare.minN,
+            values: compare.band.values,
+          }
+        : { label: online ? "これまでのオンライン面接の" : "これまでの", n: compare.all.n, minN: compare.minN, values: compare.all.values };
   }
   const o = summary.overall;
   const q = summary.quality;
@@ -82,7 +89,7 @@ export function ExpressionSummaryView({
           <span className="muted small">比べる相手</span>
           <div className="seg">
             <button type="button" className={effective === "all" ? "active" : ""} onClick={() => setScope("all")}>
-              これまでの面接 <span className="num">{compare.all.n}</span>件
+              {online ? "これまでのオンライン面接" : "これまでの面接"} <span className="num">{compare.all.n}</span>件
             </button>
             {compare.band && (
               <button
@@ -97,6 +104,7 @@ export function ExpressionSummaryView({
             )}
           </div>
           {!compare.band && <span className="muted small">年齢を入力すると、同じ年代の面接と比べられます</span>}
+          {online && <span className="muted small">オンライン面接(Google Meet)の録画は、画質が違うため対面の面接とは分けて比べます</span>}
         </div>
       )}
 

@@ -29,15 +29,7 @@ const REC_STATUS: Record<RecordingMeta["status"], string> = {
 
 type SideTab = "scenes" | "segments" | "transcript" | "notes" | "marks";
 
-export function ReviewPanel({
-  detail,
-  setDetail,
-  compare,
-}: {
-  detail: InterviewDetail;
-  setDetail: (d: InterviewDetail) => void;
-  compare: ExpressionCompare | null;
-}) {
+export function ReviewPanel({ detail, setDetail }: { detail: InterviewDetail; setDetail: (d: InterviewDetail) => void }) {
   const { user, info, settings } = useSession();
   const { search } = useRouter();
   const toast = useToast();
@@ -51,6 +43,24 @@ export function ReviewPanel({
     () => (recs.find((r) => r.id === linkRec) ?? recs.find((r) => r.status === "ready") ?? recs[0])?.id ?? null,
   );
   const rec = recs.find((r) => r.id === rid) ?? recs[0] ?? null;
+
+  // 表情の比較は、選んでいる録画と同じ映像の元(対面のカメラ / オンライン面接の Meet)の面接と比べる。
+  // 面接を移ってもこの画面が使い回されることがあるため、面接ごとに分けて持つ
+  const [compares, setCompares] = useState<Record<string, ExpressionCompare>>({});
+  const capture: RecordingMeta["capture"] | null = rec?.capture ?? null;
+  const compareKey = capture ? `${iv.id}:${capture}` : null;
+  useEffect(() => {
+    if (!capture || !compareKey || compares[compareKey]) return;
+    let alive = true;
+    api
+      .expressionCompare(iv.id, capture)
+      .then((c) => alive && setCompares((m) => ({ ...m, [compareKey]: c })))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [iv.id, capture, compareKey, compares]);
+  const compare = compareKey ? (compares[compareKey] ?? null) : null;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [summary, setSummary] = useState<ExpressionSummary | null>(null);
@@ -218,7 +228,13 @@ export function ReviewPanel({
       {rec && (
         <div className="pad">
           <div className="rec-meta muted small">
-            {formatDateTime(rec.startedAt)} ・ {rec.source === "file" ? `取り込み${rec.originalName ? `(${rec.originalName})` : ""}` : "この画面で録画"} ・{" "}
+            {formatDateTime(rec.startedAt)} ・{" "}
+            {rec.source === "file"
+              ? `取り込み${rec.capture === "screen" ? "・オンライン面接" : ""}${rec.originalName ? `(${rec.originalName})` : ""}`
+              : rec.capture === "screen"
+                ? "Google Meet の画面から録画"
+                : "この画面で録画"}{" "}
+            ・{" "}
             {formatDuration(rec.durationMs)} ・ {formatBytes(rec.sizeBytes)} ・ {rec.createdByName}
             {rec.status !== "ready" && <span className={`rec-status st-${rec.status}`}> ・ {REC_STATUS[rec.status]}</span>}
             {rec.status === "ready" && !rec.indexed && <span> ・ シーク用の索引なし(移動に時間がかかることがあります)</span>}
@@ -378,6 +394,11 @@ export function ReviewPanel({
           )}
 
           {analysisError && <Notice kind="error">表情の計測結果を読み込めません: {analysisError}</Notice>}
+          {summary && rec.capture === "screen" && (
+            <Notice kind="info">
+              オンライン面接(Google Meet)の映像から計測しています。通信の状態で画質やコマ数が落ちると表情の動きが小さく出ることがあるため、対面の面接の値とは分けて参考にしてください。
+            </Notice>
+          )}
           {summary && <ExpressionSummaryView summary={summary} compare={compare} />}
 
           {!iv.consent?.analysis && (

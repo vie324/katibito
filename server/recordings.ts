@@ -281,16 +281,21 @@ export async function loadSummary(
 }
 
 /** 面接の代表の集計(顔が最も長く映っていた録画)。比較・CSV で使う */
-export async function representativeSummary(ctx: AppContext, iid: string): Promise<ExpressionSummary | null> {
+/** 代表の録画の集計と、その録画の映像の元(カメラ / Google Meet の画面) */
+export async function representative(
+  ctx: AppContext,
+  iid: string,
+): Promise<{ summary: ExpressionSummary; capture: RecordingMeta["capture"] } | null> {
   const iv = ctx.store.interviews.get(iid);
   if (!iv) return null;
-  const summaries: ExpressionSummary[] = [];
+  const items: { overall: ExpressionSummary["overall"]; summary: ExpressionSummary; capture: RecordingMeta["capture"] }[] = [];
   for (const rec of iv.recordings) {
     if (rec.analysis !== "ready") continue;
     const s = await loadSummary(ctx, iid, rec).catch(() => null);
-    if (s) summaries.push(s);
+    if (s) items.push({ overall: s.overall, summary: s, capture: rec.capture });
   }
-  return pickRepresentative(summaries);
+  const best = pickRepresentative(items);
+  return best ? { summary: best.summary, capture: best.capture } : null;
 }
 
 /** 映像と顔トラックを消す。keepSummary = true なら集計(数値)は残す(保存期間による削除) */

@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { pickRepresentative, type ExpressionSummary } from "../../analysis/expression";
-import type { ExpressionCompare, InterviewDetail } from "../../shared/types";
+import { CONSENT_METHOD_LABEL } from "../../shared/consent";
+import { meetLabel } from "../../shared/meet";
+import type { InterviewDetail } from "../../shared/types";
 import { api, errorMessage } from "../api";
 import { AttachmentsPanel } from "../detail/AttachmentsPanel";
 import { ConsentLinksPanel } from "../detail/ConsentLinksPanel";
@@ -53,7 +55,6 @@ export function InterviewDetailPage({ id }: { id: string }) {
   const toast = useToast();
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [compare, setCompare] = useState<ExpressionCompare | null>(null);
   const [summary, setSummary] = useState<ExpressionSummary | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -67,11 +68,6 @@ export function InterviewDetailPage({ id }: { id: string }) {
       .interview(id)
       .then((d) => alive && setDetail(d))
       .catch((e) => alive && setError(errorMessage(e)));
-    setCompare(null);
-    api
-      .expressionCompare(id)
-      .then((s) => alive && setCompare(s))
-      .catch(() => undefined);
     return () => {
       alive = false;
     };
@@ -179,6 +175,11 @@ export function InterviewDetailPage({ id }: { id: string }) {
           <StatusChip status={detail.status} />
         </div>
         <span className="spacer" />
+        {iv.meetUrl && !decided && (
+          <a className="button" href={iv.meetUrl} target="_blank" rel="noopener noreferrer" title={iv.meetUrl}>
+            Meet を開く
+          </a>
+        )}
         {canRecord && (
           <>
             <button className="primary" onClick={() => navigate(`/interviews/${iv.id}/record`)}>
@@ -229,10 +230,26 @@ export function InterviewDetailPage({ id }: { id: string }) {
             <span className="muted">評価シート</span> {iv.templateName}
           </span>
         )}
-        {iv.location && (
+        {(iv.location || iv.format === "online") && (
           <span>
-            <span className="muted">場所</span> {iv.location}
+            <span className="muted">場所</span> {iv.location || "オンライン(Google Meet)"}
+            {iv.format === "online" && iv.location && <span className="online-tag">オンライン</span>}
           </span>
+        )}
+        {iv.meetUrl ? (
+          <span className="meet-link">
+            <span className="muted">Google Meet</span>
+            <a href={iv.meetUrl} target="_blank" rel="noopener noreferrer" className="meet-code">
+              {meetLabel(iv.meetUrl)}
+            </a>
+          </span>
+        ) : (
+          iv.format === "online" &&
+          !decided && (
+            <span className="muted small">
+              Meet のリンクは未登録です(<Link to={`/interviews/${iv.id}/edit`}>編集</Link>から追加できます)
+            </span>
+          )
         )}
         <span>
           <span className="muted">面接官</span>{" "}
@@ -255,7 +272,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
           <span>
             録画 <b>あり</b> ・ 表情の計測 <b>{c.analysis ? "あり" : "なし"}</b>
             <span className="muted small">
-              ({c.method === "paper" ? "紙の同意書" : c.method === "online" ? `オンラインで入力(${c.obtainedByName} がリンクを送付)` : `画面で取得・${c.obtainedByName}`}・{formatDateTime(c.obtainedAt)}
+              ({c.method === "online" ? `オンラインで入力(${c.obtainedByName} がリンクを送付)` : `${CONSENT_METHOD_LABEL[c.method]}・${c.obtainedByName}`}・{formatDateTime(c.obtainedAt)}
               {c.guardianName ? `・保護者 ${c.guardianName}${c.guardianRelation ? `(${c.guardianRelation})` : ""}` : ""})
             </span>
           </span>
@@ -289,7 +306,7 @@ export function InterviewDetailPage({ id }: { id: string }) {
         <div className="detail-main">
           {liveRec && <LivePanel detail={detail} setDetail={setDetail} rec={liveRec} />}
           {activeRecs.length > 0 ? (
-            <ReviewPanel detail={detail} setDetail={setDetail} compare={compare} />
+            <ReviewPanel detail={detail} setDetail={setDetail} />
           ) : (
             <section className="panel pad empty-review">
               {iv.recordingDeclined ? (

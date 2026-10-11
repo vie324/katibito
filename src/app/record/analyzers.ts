@@ -53,6 +53,69 @@ function onFrames(video: VideoWithRvfc, cb: (now: number, mediaTime: number) => 
   };
 }
 
+type TrackProcessorCtor = new (init: { track: MediaStreamTrack; maxBufferSize?: number }) => { readable: ReadableStream<VideoFrame> };
+
+/**
+ * 映像のトラックから直接フレームを受け取る(Chrome の MediaStreamTrackProcessor)。
+ * 画面の描画とは関係なく届くため、この画面が裏に回っている間(Meet のタブを見ている間など)も計測が続く。
+ * 使えないブラウザでは null(video 要素の描画に合わせて計測する)。
+ */
+function onTrackFrames(track: MediaStreamTrack, cb: (now: number, frame: VideoFrame) => void): (() => void) | null {
+  const Ctor = (globalThis as unknown as { MediaStreamTrackProcessor?: TrackProcessorCtor }).MediaStreamTrackProcessor;
+  if (!Ctor || track.readyState !== "live") return null;
+  const clone = track.clone();
+  let reader: ReadableStreamDefaultReader<VideoFrame>;
+  try {
+    // 計測が追いつかないときは古いフレームを捨て、いちばん新しいフレームを使う
+    reader = new Ctor({ track: clone, maxBufferSize: 1 }).readable.getReader();
+  } catch {
+    clone.stop();
+    return null;
+  }
+  let stopped = false;
+  let finished = false;
+  let cloneStopped = false;
+  const stopClone = () => {
+    if (cloneStopped) return;
+    cloneStopped = true;
+    clone.stop();
+  };
+  void (async () => {
+    // 届いたフレームはすべて閉じる(閉じずに捨てたフレームは、閉じられないまま残るため)。
+    // 止めるときは、フレームを読んで閉じた直後か、次のフレームを待っている間に複製したトラックを止める
+    // (読み取りの列にフレームが残ったまま止めると、そのフレームが閉じられずに捨てられる)
+    for (;;) {
+      let r: ReadableStreamReadResult<VideoFrame>;
+      try {
+        r = await reader.read();
+      } catch {
+        break;
+      }
+      if (r.done) break;
+      const frame = r.value;
+      if (stopped) {
+        frame.close();
+        stopClone();
+        continue;
+      }
+      try {
+        cb(performance.now(), frame);
+      } finally {
+        frame.close();
+      }
+    }
+    finished = true;
+  })();
+  return () => {
+    stopped = true;
+    // 映像が止まっていて次のフレームが来ないときのため。タイマーは読み取りを待っている間にしか動かない
+    setTimeout(stopClone, 300);
+    setTimeout(() => {
+      if (!finished) void reader.cancel().catch(() => undefined);
+    }, 3000);
+  };
+}
+
 function toSample(f: FaceObservation) {
   return { blend: f.blend, yaw: f.yaw, pitch: f.pitch, roll: f.roll, box: f.box };
 }
@@ -70,21 +133,45 @@ export class LiveAnalyzer {
   private lastAt = -Infinity;
   private hiddenSince: number | null = null;
   private rateWindow: number[] = [];
+  private frameW = 0;
+  private frameH = 0;
+  private viaTrack = false;
+  private trackErrors = 0;
   private readonly onVisibility = () => this.handleVisibility();
 
+  /** track を渡すと、映像のトラックから直接フレームを受け取る(使えなければ video 要素から) */
   constructor(
     private readonly engine: FaceEngine,
     private readonly video: HTMLVideoElement,
     private readonly audio: AudioEngine | null,
+    private readonly track: MediaStreamTrack | null = null,
   ) {
     this.tracker.setAspect((video.videoWidth || 16) / (video.videoHeight || 9));
+  }
+
+  /** この画面が裏に回ると計測が止まるか(映像のトラックから直接受け取れないとき) */
+  get pausesWhenHidden(): boolean {
+    return !this.viaTrack;
   }
 
   /** プレビュー(撮影準備)から動かす。recording を始めるまで顔トラックには積まない */
   run(): void {
     if (this.stopLoop) return;
+    const stop = this.track ? onTrackFrames(this.track, (now, f) => this.frame(now, f)) : null;
+    if (stop) {
+      this.viaTrack = true;
+      this.stopLoop = stop;
+      return;
+    }
+    this.runOnVideo();
+  }
+
+  private runOnVideo(): void {
+    this.viaTrack = false;
     document.addEventListener("visibilitychange", this.onVisibility);
-    this.stopLoop = onFrames(this.video, (now) => this.frame(now));
+    // 裏に回っている間に切り替えた場合: 表に戻るまでは計測できないので、いまから「非表示」の区間とする
+    if (document.visibilityState === "hidden" && this.hiddenSince === null) this.hiddenSince = performance.now();
+    this.stopLoop = onFrames(this.video, (now) => this.frame(now, null));
   }
 
   setTarget(t: TargetState | null): void {
@@ -92,22 +179,29 @@ export class LiveAnalyzer {
     else this.tracker.reset();
   }
 
-  /** 録画開始。t0 は MediaRecorder の start 時刻 */
-  beginRecording(t0: number): void {
+  /**
+   * 録画開始。t0 は MediaRecorder の start 時刻。
+   * late = 計測の準備より先に録画が始まっていた(録画の先頭からいままでは計測していない区間として残す)
+   */
+  beginRecording(t0: number, late = false): void {
     this.t0 = t0;
     const cur = this.tracker.current;
     this.builder = new FaceTrackBuilder(
       defaultTrackMeta({
         source: "live",
         intervalMs: INTERVIEW_ANALYSIS.LIVE_INTERVAL_MS,
-        videoWidth: this.video.videoWidth,
-        videoHeight: this.video.videoHeight,
+        videoWidth: this.frameW || this.video.videoWidth,
+        videoHeight: this.frameH || this.video.videoHeight,
         appVersion: APP_VERSION,
         hasAudio: this.audio !== null,
         target: cur ? { cx: cur.cx, cy: cur.cy } : null,
       }),
       30 * 60 * 16,
     );
+    if (late) {
+      const endMs = Math.max(0, performance.now() - t0);
+      if (endMs > 0) this.builder.addGap({ startMs: 0, endMs, reason: "stalled" });
+    }
   }
 
   /** 録画中の顔トラック(途中保存用のコピー) */
@@ -142,15 +236,40 @@ export class LiveAnalyzer {
     }
   }
 
-  private frame(now: number): void {
+  private frame(now: number, vf: VideoFrame | null): void {
     if (now - this.lastAt < INTERVIEW_ANALYSIS.LIVE_INTERVAL_MS - 4) return;
-    if (this.video.readyState < 2 || this.video.videoWidth === 0) return;
+    let source: TexImageSource;
+    let w: number;
+    let h: number;
+    if (vf) {
+      source = vf;
+      w = vf.displayWidth;
+      h = vf.displayHeight;
+    } else {
+      if (this.video.readyState < 2 || this.video.videoWidth === 0) return;
+      source = this.video;
+      w = this.video.videoWidth;
+      h = this.video.videoHeight;
+    }
+    if (w === 0 || h === 0) return;
+    // 画面の共有では、共有したタブの大きさが変わると映像の縦横比も変わる
+    if (w !== this.frameW || h !== this.frameH) {
+      this.frameW = w;
+      this.frameH = h;
+      this.tracker.setAspect(w / h);
+    }
     this.lastAt = now;
     let faces: FaceObservation[];
     try {
-      faces = this.engine.detectAll(this.video, now);
+      faces = this.engine.detectAll(source, now);
+      this.trackErrors = 0;
     } catch (e) {
       console.warn("[analyzer] 検出に失敗", e);
+      // トラックのフレームを受け付けない環境: video 要素からの計測に切り替える
+      if (vf && ++this.trackErrors >= 5) {
+        this.stopLoop?.();
+        this.runOnVideo();
+      }
       return;
     }
     const boxes = faces.map((f) => f.box);

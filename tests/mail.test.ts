@@ -76,6 +76,24 @@ describe("メールのお知らせ(出来事ごと)", () => {
     expect(m.text).toContain("テスト塾 の面接記録アプリ");
   });
 
+  it("オンライン面接のメールには、場所を「オンライン(Google Meet)」とし、Meet のリンクを載せる", async () => {
+    const iid = await newInterview(admin, {
+      candidate: { displayName: "Meet の面接" },
+      format: "online",
+      meetUrl: "https://meet.google.com/abc-defg-hij",
+      interviewerIds: [ids.alice],
+    });
+    smtp.mails.length = 0;
+    await readyRecording(server, admin, iid, "dev-mail-meet", "screen");
+    const until = Date.now() + 15_000;
+    let m: ReceivedMail | undefined;
+    while (!(m = to(smtp.mails, "alice@example.jp").find((x) => x.subject.includes("録画が共有されました"))) && Date.now() < until) await sleep(20);
+    expect(m).toBeDefined();
+    expect(m!.text).toContain("場所: オンライン(Google Meet)");
+    expect(m!.text).toContain("Google Meet: https://meet.google.com/abc-defg-hij");
+    smtp.mails.length = 0;
+  });
+
   it("ライブ開始は受け取る設定の人へ(録画している本人を除く)、録画の共有は担当の面接官へ", async () => {
     const iid = await newInterview(alice, { candidate: { displayName: "山田 太郎" }, round: "一次面接", interviewerIds: [ids.alice, ids.bob] });
     const r = await alice.req("POST", `/api/interviews/${iid}/recordings`, { clientId: "dev-mail-live", source: "live", mimeType: "video/webm" });
@@ -272,7 +290,8 @@ describe("APP_URL が未設定のサーバー", () => {
       expect((await admin.req("PUT", "/api/me/notify", { email: "boss@example.jp" }, { headers: { Origin: server.base } })).status).toBe(200);
       smtp.mails.length = 0;
       await readyRecording(server, admin, iid, "dev-nolink");
-      await smtp.waitFor(1);
+      // 録画の仕上げ(再生用の MP4 の作成など)のあとに届くため、ほかのテストと並んで重いときは時間がかかる
+      await smtp.waitFor(1, 15_000);
       const m = to(smtp.mails, "alice@example.jp")[0];
       expect(m.subject).toContain("録画が共有されました");
       expect(m.text).not.toContain("/interviews/");

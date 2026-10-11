@@ -162,7 +162,7 @@ export class FaceEngine {
    * 運用版: 映っている顔をすべて返す(候補者の選別は呼び出し側)。
    * timestampMs は単調増加に補正して MediaPipe に渡す(§9-3)。
    */
-  detectAll(source: HTMLVideoElement, timestampMs: number): FaceObservation[] {
+  detectAll(source: TexImageSource, timestampMs: number): FaceObservation[] {
     const ts = Math.max(Math.round(timestampMs), this.lastSubmittedMs + 1);
     this.lastSubmittedMs = ts;
     const result = this.landmarker.detectForVideo(source, ts);

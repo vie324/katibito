@@ -8,6 +8,7 @@ import type {
   ConsentLink,
   ExpressionCompare,
   InterviewDetail,
+  InterviewFormat,
   InterviewListItem,
   LiveInfo,
   Marker,
@@ -113,7 +114,7 @@ export type ConsentInput = {
   candidateName: string;
   guardianName: string;
   guardianRelation: string;
-  method: "onscreen" | "paper";
+  method: "onscreen" | "paper" | "verbal";
   consentText: string;
 };
 
@@ -122,6 +123,8 @@ export type InterviewInput = {
   round: string;
   scheduledAt: string | null;
   location: string;
+  format?: InterviewFormat;
+  meetUrl?: string | null;
   interviewerIds: string[];
   questions: QuestionPlan[];
   templateId?: string;
@@ -205,8 +208,8 @@ export const api = {
   attachmentUrl: (id: string, aid: string, download = false) => `${iv(id)}/attachments/${enc(aid)}${download ? "?download=1" : ""}`,
   deleteAttachment: (id: string, aid: string) =>
     request<{ attachments: AttachmentMeta[] }>("DELETE", `${iv(id)}/attachments/${enc(aid)}`),
-  createConsentLink: (id: string, days: number) =>
-    request<{ token: string; link: ConsentLink; detail: InterviewDetail }>("POST", `${iv(id)}/consent-links`, { days }),
+  createConsentLink: (id: string, days: number, purpose: "advance" | "meeting" = "advance") =>
+    request<{ token: string; link: ConsentLink; detail: InterviewDetail }>("POST", `${iv(id)}/consent-links`, { days, purpose }),
   revokeConsentLink: (id: string, lid: string) => request<InterviewDetail>("DELETE", `${iv(id)}/consent-links/${enc(lid)}`),
   publicConsent: (token: string) => request<PublicConsentInfo>("GET", `/api/public/consent/${enc(token)}`),
   submitPublicConsent: (
@@ -220,7 +223,14 @@ export const api = {
 
   createRecording: (
     id: string,
-    b: { clientId: string; source: "live" | "file"; mimeType: string; startedAt: string; fileName?: string | null },
+    b: {
+      clientId: string;
+      source: "live" | "file";
+      capture?: "camera" | "screen";
+      mimeType: string;
+      startedAt: string;
+      fileName?: string | null;
+    },
   ) => request<{ recording: RecordingMeta; received: number[] }>("POST", `${iv(id)}/recordings`, b),
   recording: (id: string, rid: string) =>
     request<{ recording: RecordingMeta; received: number[] }>("GET", recPath(id, rid)),
@@ -264,7 +274,8 @@ export const api = {
     request<{ recording: RecordingMeta }>("POST", `${recPath(id, rid)}/reprocess`, {}),
 
   search: (q: string) => request<{ results: SearchResult[]; truncated: boolean }>("GET", `/api/search?q=${enc(q)}`),
-  expressionCompare: (id: string) => request<ExpressionCompare>("GET", `${iv(id)}/expression-compare`),
+  expressionCompare: (id: string, capture?: "camera" | "screen") =>
+    request<ExpressionCompare>("GET", `${iv(id)}/expression-compare${capture ? `?capture=${capture}` : ""}`),
   compare: () => request<{ rows: CompareRow[] }>("GET", "/api/compare"),
   raterStats: () => request<{ raters: RaterStats[] }>("GET", "/api/stats/raters"),
   /** 指定した面接だけの CSV(管理者) */

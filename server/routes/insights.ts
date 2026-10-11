@@ -6,10 +6,10 @@ import { INTERVIEW_ANALYSIS } from "../../src/config/scoring";
 import { ageBand } from "../../src/shared/ageBand";
 import { averageScore, criterionAverages, weightedScore } from "../../src/shared/score";
 import { deriveStatus, submittedEvaluations, tallyVotes } from "../../src/shared/status";
-import type { CompareRow, ExpressionCompare, Interview, MetricDistribution, RaterStats, Vote } from "../../src/shared/types";
+import type { CompareRow, ExpressionCompare, Interview, MetricDistribution, RaterStats, RecordingMeta, Vote } from "../../src/shared/types";
 import type { AppContext } from "../context";
 import type { Router } from "../http";
-import { representativeSummary } from "../recordings";
+import { representative } from "../recordings";
 import type { UserRecord } from "../store";
 import { canView, evaluationVisibility, getInterview } from "./interviews";
 
@@ -31,12 +31,22 @@ function heldAt(iv: Interview): string | null {
   return starts[0] ?? iv.scheduledAt;
 }
 
-async function expressionOf(app: AppContext, iv: Interview): Promise<ExpressionMetrics | null> {
+type Capture = RecordingMeta["capture"];
+
+async function expressionOf(app: AppContext, iv: Interview): Promise<{ metrics: ExpressionMetrics; capture: Capture } | null> {
   if (!iv.consent?.analysis) return null;
-  const s = await representativeSummary(app, iv.id);
+  const r = await representative(app, iv.id);
   // 信頼度「低」の計測は比べない
-  if (!s || s.quality.level === "low") return null;
-  return s.overall;
+  if (!r || r.summary.quality.level === "low") return null;
+  return { metrics: r.summary.overall, capture: r.capture };
+}
+
+/** 面接の映像の元。計測があれば代表の録画、なければ録画・面接の形式から */
+function captureOf(iv: Interview, measured: { capture: Capture } | null): Capture {
+  if (measured) return measured.capture;
+  const recs = iv.recordings.filter((r) => r.status !== "deleted");
+  if (recs.length > 0) return recs.some((r) => r.capture === "screen") ? "screen" : "camera";
+  return iv.format === "online" ? "screen" : "camera";
 }
 
 export async function compareRow(app: AppContext, iv: Interview, user: UserRecord): Promise<CompareRow> {
@@ -45,11 +55,11 @@ export async function compareRow(app: AppContext, iv: Interview, user: UserRecor
   const vis = evaluationVisibility(app, iv, user, mine);
   const submitted = submittedEvaluations(evals);
   const avgs = criterionAverages(iv.criteria, evals);
-  const overall = await expressionOf(app, iv);
+  const measured = await expressionOf(app, iv);
   let expression: Record<string, number | null> | null = null;
-  if (overall) {
+  if (measured) {
     expression = {};
-    for (const k of COMPARABLE_METRICS) expression[k] = overall[k];
+    for (const k of COMPARABLE_METRICS) expression[k] = measured.metrics[k];
   }
   return {
     id: iv.id,
@@ -77,6 +87,7 @@ export async function compareRow(app: AppContext, iv: Interview, user: UserRecor
     passLine: iv.passLine,
     criteria: vis.visible ? iv.criteria.map((c) => ({ label: c.label, weight: c.weight, avg: avgs[c.id] ?? null })) : null,
     expression,
+    expressionCapture: measured?.capture ?? null,
   };
 }
 
@@ -192,6 +203,10 @@ export function registerInsightRoutes(r: Router, app: AppContext): void {
     const iv = getInterview(app, c.params.id);
     const band = ageBand(iv.candidate.age);
     const minN = INTERVIEW_ANALYSIS.COMPARE_MIN_N;
+    // 対面(カメラ)とオンライン(Google Meet の画面)は画質が違うため、同じ映像の元の面接どうしで比べる。
+    // 確認画面で選んでいる録画の映像の元を ?capture= で指定できる(1つの面接に両方の録画があるとき)
+    const q = c.query.get("capture");
+    const capture: Capture = q === "camera" || q === "screen" ? q : captureOf(iv, await expressionOf(app, iv));
     const all: ExpressionMetrics[] = [];
     const inBand: ExpressionMetrics[] = [];
     for (const x of store.interviews.values()) {
@@ -200,12 +215,13 @@ export function registerInsightRoutes(r: Router, app: AppContext): void {
       // 見られる面接だけで比べる(「担当の面接だけ」のとき、面接ごとの応答の差から見られない面接の値を割り出せないように)
       if (!canView(app, c.user!, x)) continue;
       const m = await expressionOf(app, x);
-      if (!m) continue;
-      all.push(m);
-      if (band && ageBand(x.candidate.age)?.id === band.id) inBand.push(m);
+      if (!m || m.capture !== capture) continue;
+      all.push(m.metrics);
+      if (band && ageBand(x.candidate.age)?.id === band.id) inBand.push(m.metrics);
     }
     return {
       minN,
+      capture,
       all: distribution(all, minN),
       band: band ? { label: band.label, ...distribution(inBand, minN) } : null,
     };

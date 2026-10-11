@@ -8,7 +8,7 @@ import { arr, id, int, obj } from "../../src/shared/validate";
 import type { AppContext } from "../context";
 import { attachmentHeader, HANDLED, HttpError, readJson, type Ctx, type Router } from "../http";
 import { ensureModels, transcriptionStatus } from "../transcribe";
-import { representativeSummary } from "../recordings";
+import { representative } from "../recordings";
 import { runRetention } from "../retention";
 import { storageUsage } from "../storage";
 import { audit } from "./interviews";
@@ -76,6 +76,8 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
       "判定", "判定日時", "判定者", "判定理由",
       ...COMPARABLE_METRICS.map((k) => `${METRIC_META[k].label}${METRIC_META[k].unit ? `(${METRIC_META[k].unit})` : ""}`),
       "顔の計測率(%)", "計測の信頼度",
+      // v0.4 で追加(既存の列の位置を変えないよう末尾に)
+      "形式", "表情の値の映像",
     ];
     const rows: string[] = [header.map(csvCell).join(",")];
     for (const iv of ivs) {
@@ -89,7 +91,8 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
         return typeof v === "number" ? v.toFixed(2) : "";
       };
       const score = averageScore(iv.criteria, evals);
-      const s = await representativeSummary(app, iv.id);
+      const rep = await representative(app, iv.id);
+      const s = rep?.summary ?? null;
       rows.push(
         [
           iv.id,
@@ -117,6 +120,8 @@ export function registerAdminRoutes(r: Router, app: AppContext): void {
           ...COMPARABLE_METRICS.map((k) => (s ? formatMetric(k, s.overall[k]).replace("—", "") : "")),
           s ? formatMetric("faceDetectRate", s.overall.faceDetectRate) : "",
           s ? QUALITY_LABEL[s.quality.level] : "",
+          iv.format === "online" ? "オンライン" : "対面",
+          rep ? (rep.capture === "screen" ? "Google Meet" : "カメラ") : "",
         ]
           .map(csvCell)
           .join(","),

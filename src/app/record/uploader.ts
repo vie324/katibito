@@ -364,6 +364,7 @@ class UploadManager {
       const res = await api.createRecording(r.interviewId, {
         clientId,
         source: r.source,
+        capture: r.capture ?? "camera",
         mimeType: r.mimeType,
         startedAt: r.startedAt,
       });
